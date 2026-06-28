@@ -8,6 +8,7 @@ Deps: pip install PySide6
 """
 import sys, os
 from seaglass_save import SeaglassSave, Mon, NATURES, STAT_KEYS
+import theme
 
 try:
     from PySide6.QtWidgets import (
@@ -63,7 +64,13 @@ class Editor(QMainWindow):
             a = QAction(txt, self); a.triggered.connect(fn); tb.addAction(a)
         self.setStatusBar(QStatusBar())
 
-        split = QSplitter(); self.setCentralWidget(split)
+        root = QWidget(); root.setObjectName("root")
+        rootv = QVBoxLayout(root); rootv.setContentsMargins(16, 16, 16, 12); rootv.setSpacing(12)
+        header = QLabel("◈   SEAGLASS  SAVE  EDITOR"); header.setObjectName("header")
+        header.setAlignment(Qt.AlignCenter)
+        rootv.addWidget(header)
+        split = QSplitter(); rootv.addWidget(split, 1)
+        self.setCentralWidget(root)
         self.list = QListWidget(); self.list.setMinimumWidth(260)
         self.list.currentItemChanged.connect(self.on_select)
         split.addWidget(self.list)
@@ -86,7 +93,7 @@ class Editor(QMainWindow):
         idf.addRow("Held item", self.cb_item)
         rl.addWidget(idbox)
 
-        self.lbl_info = QLabel(""); self.lbl_info.setFont(QFont("Monospace"))
+        self.lbl_info = QLabel(""); self.lbl_info.setObjectName("info")
         rl.addWidget(self.lbl_info)
 
         mvbox = QGroupBox("Moves"); mg = QGridLayout(mvbox)
@@ -117,7 +124,8 @@ class Editor(QMainWindow):
         rl.addWidget(statbox)
 
         row = QHBoxLayout()
-        self.btn_apply = QPushButton("Apply to Pokémon"); self.btn_apply.clicked.connect(self.apply)
+        self.btn_apply = QPushButton("Apply to Pokémon"); self.btn_apply.setObjectName("primary")
+        self.btn_apply.clicked.connect(self.apply)
         self.btn_revert = QPushButton("Revert"); self.btn_revert.clicked.connect(self.refresh_fields)
         row.addWidget(self.btn_apply); row.addWidget(self.btn_revert)
         rl.addLayout(row); rl.addStretch(1)
@@ -281,7 +289,9 @@ class Editor(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    w = Editor(); w.show()
+    w = Editor()
+    theme.apply_theme(app, w)
+    w.show()
     sys.exit(app.exec())
 
 if __name__ == "__main__":

@@ -1,58 +1,60 @@
 # Seaglass Save Editor
 
-A save editor for **Pokémon Emerald Seaglass** (built on pokeemerald-expansion),
-since PKHeX doesn't support it.
+A little save editor for **Pokémon Emerald Seaglass**. PKHeX and the usual tools don't understand Seaglass — it's built on pokeemerald-expansion, which renumbers all the species, moves, and items — so I made one that does.
 
-## Files
-- `seaglass_save.py` — read/write engine (no GUI; importable/scriptable).
-- `seaglass_editor.py` — PySide6 GUI on top of the engine.
 
-## Run
+
+## Get it
+
+Download **SeaglassSaveEditor.exe** from the [Releases](../../releases) page and double-click it. No Python, no install, nothing to set up.
+
+> Windows might show an "unknown publisher" warning the first time — it's just an unsigned hobby app, click **More info → Run anyway**.
+
+## What you'll need
+
+- The editor (above)
+- Your Seaglass **`.gba`** ROM
+- Your **`.sav`** file
+
+The ROM isn't optional — it's where the Pokémon/move/item names come from and it keeps your edits valid. No ROM is included; bring your own.
+
+## How to use it
+
+1. **Open Save** — pick your `.sav`
+2. **Open ROM** — pick your Seaglass `.gba`
+3. Click a Pokémon in the list on the left
+4. Change whatever you want → **Apply to Pokémon**
+5. **Save As** — writes a new file and leaves your original untouched
+
+You can edit species, nickname, nature, gender, shininess, level, friendship, held item, all four moves, and IVs/EVs. Stats are recalculated automatically, and flipping nature/gender/shiny won't scramble the other two.
+
+## Getting your save back onto a 3DS (GBA Virtual Console)
+
+If you play Seaglass as a VC game on a hacked 3DS/2DS, the save lives inside the game's 3DS data, so you go through GodMode9:
+
+1. Dump the save in GodMode9 → you get a `..._gbavc.sav`
+2. Edit it with this tool
+3. Inject the edited file back into the **same game** in GodMode9 (it fixes the checksum the VC needs — a plain copy won't boot)
+4. **Back up the original first**, then load it and check your team
+
+If you run the ROM through open_agb_firm instead, the save is just a plain `.sav` in `/3ds/open_agb_firm/saves/` — swap the file and you're done.
+
+## Heads up
+
+- **Back up your save before editing.** Always.
+- For use with your own copy of the game. Not affiliated with Nintendo or the Seaglass dev, and no ROM is included.
+
+## Run from source (optional)
+
 ```
 pip install PySide6
-python3 seaglass_editor.py
+python seaglass_editor.py
 ```
-It auto-loads a save/ROM if found at the default paths; otherwise use
-**Open Save…** and **Open ROM…**. The ROM is needed for species names,
-base stats, and gender data (i.e. for safe level/nature/species edits).
 
-## What you can edit so far
-Species, nickname, nature, level, friendship, held item (by name), 4 moves + PP (by name),
-all 6 IVs, all 6 EVs. Party stats are **recomputed automatically** on save so
-the game won't revert an edited level, and changing nature **rerolls the
-personality value while preserving shininess, gender, and ability slot**.
+Python 3.9+. Keep `seaglass_editor.py`, `seaglass_save.py`, and `theme.py` together.
 
-Workflow: pick a Pokémon → edit fields → **Apply to Pokémon** → **Save As…**
-(defaults to a *new* `*_edited.sav`, never your original).
+## Thanks
 
-## Getting the edited save back onto your device (GBA VC)
-Dumpd the save from the VC title with GodMode9. To put the edited one back:
-1. Copy `*_edited.sav` to your SD card.
-2. In GodMode9, **inject** it into the same GBA VC title's save (the
-   reverse of how you dumped). GodMode9 recomputes the save's CMAC, which the
-   VC wrapper requires — a raw byte-swap won't boot without it.
-3. **Keep your original dump as a backup** so you can always roll back.
-4. Boot the game and check your party.
+- **Pokémon Emerald Seaglass** by Nemo622 — https://ko-fi.com/nemo622
+- Built on [pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion)
 
-(If you ever switch this ROM to **open_agb_firm**, its save in
-`/3ds/open_agb_firm/saves/` is a raw `.sav` — then editing is just swap-the-file,
-no CMAC step.)
-
-## Current limitations / notes
-- **Move & held-item pickers are now name-based** and searchable (type to filter,
-  e.g. "rock" or "leftovers"). 935 moves / 1027 items resolved from the ROM.
-- **Ability names** not shown yet (slot 0/1 is shown and preserved).
-- **Species change across different growth-rate groups**: exp is set from the
-  Pokémon's pre-change growth group. Fine within a line; for a cross-group swap,
-  set the level after applying the species change once.
-- Edits the **active save slot** only and leaves the save counter alone — the
-  game loads your edited slot on next boot.
-
-## Verified facts baked in
-- National-Dex species indexing; party at SaveBlock1+0x238.
-- Standard Gen-3 crypto (key = PV^OTID, order = PV%24, 24×u16 checksum).
-- ROM SpeciesInfo stride 0xD0: name @struct+0x2c, base stats @struct+0x00
-  (HP/Atk/Def/Spe/SpA/SpD), gender ratio @struct+0x12.
-- Move names via gMovesInfo name pointers (field @0x6d2a18, stride 0x38).
-- Item names embedded @0x67e77c, stride 0x54, indexed by item ID
-  (expansion order: 1=Poké Ball, 2=Great, 3=Ultra, 4=Master, …).

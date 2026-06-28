@@ -1,0 +1,10 @@
+# PyInstaller / build artifacts
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# never commit ROMs or save files
+*.gba
+*.sav
