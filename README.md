@@ -5,7 +5,7 @@ A little save editor for **Pokémon Emerald Seaglass**. PKHeX and the usual tool
 
 ## Get it
 
-Download **SeaglassSaveEditor.exe** from the [Releases](../../releases) page and double-click it. No Python, no install, nothing to set up.
+Download **SeaglassSaveEditor.exe** from here as a zip and hten unzip and run the exe in the /dist folder.
 
 > Windows might show an "unknown publisher" warning the first time — it's just an unsigned hobby app, click **More info → Run anyway**.
 
