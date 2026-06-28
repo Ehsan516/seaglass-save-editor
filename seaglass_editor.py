@@ -15,8 +15,8 @@ try:
         QApplication, QMainWindow, QWidget, QSplitter, QListWidget, QListWidgetItem,
         QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QGroupBox, QLabel,
         QComboBox, QSpinBox, QLineEdit, QPushButton, QFileDialog, QMessageBox,
-        QToolBar, QStatusBar, QCompleter)
-    from PySide6.QtCore import Qt
+        QToolBar, QStatusBar, QCompleter, QCheckBox)
+    from PySide6.QtCore import Qt, QEvent
     from PySide6.QtGui import QAction, QFont
 except ImportError:
     sys.exit("PySide6 not installed.  Run:  pip install PySide6")
@@ -26,31 +26,37 @@ DEFAULT_SAVE = "/mnt/user-data/uploads/00040000075C8E00_gbavc.sav"
 DEFAULT_ROM  = "/mnt/user-data/uploads/Pokemon_Emerald_Seaglass_3_0__PokemonEmeraldseaglass_com_.gba"
 
 
-def make_search_combo():
-    """Editable combo with case-insensitive contains-search."""
-    c = QComboBox()
-    c.setEditable(True)
-    c.setInsertPolicy(QComboBox.NoInsert)
-    c.setMaxVisibleItems(20)
-    comp = c.completer()
-    comp.setCompletionMode(QCompleter.PopupCompletion)
-    comp.setFilterMode(Qt.MatchContains)
-    comp.setCaseSensitivity(Qt.CaseInsensitive)
-    return c
+class SearchableComboBox(QComboBox):
+    """Editable combo that pops its list open on click and filters as you type."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+        self.setMaxVisibleItems(18)
+        c = self.completer()
+        c.setCompletionMode(QCompleter.PopupCompletion)
+        c.setFilterMode(Qt.MatchContains)
+        c.setCaseSensitivity(Qt.CaseInsensitive)
+        self.lineEdit().installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.lineEdit() and ev.type() == QEvent.MouseButtonPress and self.isEnabled():
+            self.showPopup()
+            return True
+        return super().eventFilter(obj, ev)
 
 
 class Editor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Seaglass Save Editor")
-        self.resize(980, 720)
+        self.resize(1040, 760)
         self.save = None
         self.rom_path = None
         self.cur = None
         self._species = []
         self._move_name2id = {}
         self._item_name2id = {}
-
         self._build_ui()
         if os.path.exists(DEFAULT_SAVE):
             self.load_save(DEFAULT_SAVE,
@@ -66,28 +72,42 @@ class Editor(QMainWindow):
 
         root = QWidget(); root.setObjectName("root")
         rootv = QVBoxLayout(root); rootv.setContentsMargins(16, 16, 16, 12); rootv.setSpacing(12)
-        header = QLabel("◈   SEAGLASS  SAVE  EDITOR"); header.setObjectName("header")
+        header = QLabel("\u25c8   SEAGLASS  SAVE  EDITOR"); header.setObjectName("header")
         header.setAlignment(Qt.AlignCenter)
         rootv.addWidget(header)
         split = QSplitter(); rootv.addWidget(split, 1)
         self.setCentralWidget(root)
-        self.list = QListWidget(); self.list.setMinimumWidth(260)
+
+        self.list = QListWidget(); self.list.setMinimumWidth(250)
         self.list.currentItemChanged.connect(self.on_select)
         split.addWidget(self.list)
 
-        right = QWidget(); rl = QVBoxLayout(right); split.addWidget(right)
-        split.setStretchFactor(1, 1)
+        # right editor panel, width-capped and centered so it never stretches thin
+        right = QWidget(); right.setObjectName("editorPanel"); right.setMaximumWidth(860)
+        rl = QVBoxLayout(right); rl.setSpacing(12)
+        wrap = QWidget(); wl = QHBoxLayout(wrap); wl.setContentsMargins(0, 0, 0, 0)
+        wl.addStretch(1); wl.addWidget(right); wl.addStretch(1)
+        split.addWidget(wrap)
+        split.setStretchFactor(1, 1); split.setSizes([260, 780])
 
+        # --- Identity ---
         idbox = QGroupBox("Identity"); idf = QFormLayout(idbox)
-        self.cb_species = make_search_combo()
+        idf.setSpacing(8)
+        self.cb_species = SearchableComboBox()
         self.le_nick = QLineEdit(); self.le_nick.setMaxLength(10)
         self.cb_nature = QComboBox(); self.cb_nature.addItems(NATURES)
+        self.cb_ability = QComboBox()
+        self.cb_gender = QComboBox()
+        self.chk_shiny = QCheckBox("Shiny")
         self.sp_level = QSpinBox(); self.sp_level.setRange(1, 100)
         self.sp_friend = QSpinBox(); self.sp_friend.setRange(0, 255)
-        self.cb_item = make_search_combo()
+        self.cb_item = SearchableComboBox()
         idf.addRow("Species", self.cb_species)
         idf.addRow("Nickname", self.le_nick)
         idf.addRow("Nature", self.cb_nature)
+        idf.addRow("Ability", self.cb_ability)
+        idf.addRow("Gender", self.cb_gender)
+        idf.addRow("", self.chk_shiny)
         idf.addRow("Level", self.sp_level)
         idf.addRow("Friendship", self.sp_friend)
         idf.addRow("Held item", self.cb_item)
@@ -96,17 +116,19 @@ class Editor(QMainWindow):
         self.lbl_info = QLabel(""); self.lbl_info.setObjectName("info")
         rl.addWidget(self.lbl_info)
 
+        # --- Moves ---
         mvbox = QGroupBox("Moves"); mg = QGridLayout(mvbox)
         mg.addWidget(QLabel("Move"), 0, 1); mg.addWidget(QLabel("PP"), 0, 2)
         self.cb_move = []; self.sp_pp = []
         for i in range(4):
-            mv = make_search_combo()
-            pp = QSpinBox(); pp.setRange(0, 99)
+            mv = SearchableComboBox()
+            pp = QSpinBox(); pp.setRange(0, 99); pp.setMaximumWidth(80)
             self.cb_move.append(mv); self.sp_pp.append(pp)
             mg.addWidget(QLabel(f"{i+1}"), i+1, 0); mg.addWidget(mv, i+1, 1); mg.addWidget(pp, i+1, 2)
         mg.setColumnStretch(1, 1)
         rl.addWidget(mvbox)
 
+        # --- IVs / EVs ---
         statbox = QGroupBox("IVs (0–31)  /  EVs (0–252)"); sg = QGridLayout(statbox)
         self.sp_iv = []; self.sp_ev = []
         sg.addWidget(QLabel("IV"), 0, 0); sg.addWidget(QLabel("EV"), 0, 1)
@@ -132,8 +154,9 @@ class Editor(QMainWindow):
         self._set_enabled(False)
 
     def _set_enabled(self, on):
-        for w in (self.cb_species, self.le_nick, self.cb_nature, self.sp_level,
-                  self.sp_friend, self.cb_item, self.btn_apply, self.btn_revert,
+        for w in (self.cb_species, self.le_nick, self.cb_nature, self.cb_ability, self.sp_level,
+                  self.sp_friend, self.cb_item, self.cb_gender, self.chk_shiny,
+                  self.btn_apply, self.btn_revert,
                   *self.cb_move, *self.sp_pp, *self.sp_iv, *self.sp_ev):
             w.setEnabled(on)
 
@@ -152,8 +175,7 @@ class Editor(QMainWindow):
 
     def _fill_combo(self, combo, pairs):
         combo.blockSignals(True); combo.clear()
-        for idx, nm in pairs:
-            combo.addItem(nm, idx)
+        for idx, nm in pairs: combo.addItem(nm, idx)
         combo.blockSignals(False)
 
     def load_save(self, save_path, rom_path):
@@ -174,8 +196,7 @@ class Editor(QMainWindow):
 
     def status(self):
         if not self.save: return
-        bad = self.save.verify_checksums()
-        t = self.save.trainer()
+        bad = self.save.verify_checksums(); t = self.save.trainer()
         rom = "ROM loaded" if self.rom_path else "no ROM — load it for names/stats"
         self.statusBar().showMessage(
             f"{os.path.basename(self.save.path)} | Trainer {t['name']} | "
@@ -218,6 +239,40 @@ class Editor(QMainWindow):
         self._set_combo(self.cb_species, m.species, f"#{m.species}")
         self.le_nick.setText(m.nickname)
         self.cb_nature.setCurrentIndex(m.nature)
+        # ability (per-species options)
+        abils = self.save.species_abilities(m.species) if self.rom_path else []
+        self.cb_ability.blockSignals(True); self.cb_ability.clear()
+        if abils:
+            for slot, aid, nm in abils: self.cb_ability.addItem(nm, slot)
+            if len(abils) > 1:
+                self.cb_ability.setEnabled(True)
+                ix = self.cb_ability.findData(m.ability_slot)
+                self.cb_ability.setCurrentIndex(ix if ix >= 0 else 0)
+            else:
+                self.cb_ability.setEnabled(False); self.cb_ability.setCurrentIndex(0)
+        else:
+            self.cb_ability.addItem("?", 0); self.cb_ability.setEnabled(False)
+        self.cb_ability.blockSignals(False)
+        # gender
+        ratio = self.save.gender_ratio(m.species) if self.rom_path else None
+        self.cb_gender.blockSignals(True); self.cb_gender.clear()
+        if ratio is None:
+            self.cb_gender.addItem("—", None); self.cb_gender.setEnabled(False)
+        elif ratio == 255:
+            self.cb_gender.addItem("Genderless", "N"); self.cb_gender.setEnabled(False)
+        elif ratio == 0:
+            self.cb_gender.addItem("Male", "M"); self.cb_gender.setEnabled(False)
+        elif ratio == 254:
+            self.cb_gender.addItem("Female", "F"); self.cb_gender.setEnabled(False)
+        else:
+            self.cb_gender.addItem("Male", "M"); self.cb_gender.addItem("Female", "F")
+            self.cb_gender.setEnabled(True)
+            self.cb_gender.setCurrentIndex(0 if self.save.gender_of(m.pv, m.species) == 'M' else 1)
+        self.cb_gender.blockSignals(False)
+        # shiny
+        self.chk_shiny.blockSignals(True)
+        self.chk_shiny.setChecked(m.shiny); self.chk_shiny.setEnabled(bool(self.rom_path))
+        self.chk_shiny.blockSignals(False)
         self.sp_level.setValue(m.level or 1)
         self.sp_friend.setValue(m.friendship)
         self._set_combo(self.cb_item, m.held_item, self.save.item_name(m.held_item))
@@ -257,11 +312,20 @@ class Editor(QMainWindow):
         m.pp = [w.value() for w in self.sp_pp]
         m.ivs = {k: self.sp_iv[i].value() for i, k in enumerate(STAT_KEYS)}
         m.evs = {k: self.sp_ev[i].value() for i, k in enumerate(STAT_KEYS)}
-        tgt = self.cb_nature.currentIndex()
-        if tgt != m.nature and self.rom_path:
-            m.pv = self.save.reroll_pv(m, tgt)
-        elif tgt != m.nature:
-            QMessageBox.information(self, "Nature", "Load the ROM to change nature safely.")
+        if self.cb_ability.isEnabled() and self.rom_path:
+            m.ability_slot = self.cb_ability.currentData()
+        # nature / gender / shiny -> one PV reroll preserving the others
+        want_nat = self.cb_nature.currentIndex()
+        want_shiny = self.chk_shiny.isChecked()
+        want_gender = self.cb_gender.currentData() if self.cb_gender.isEnabled() else None
+        cur_gender = self.save.gender_of(m.pv, m.species) if self.rom_path else None
+        gender_changed = (want_gender is not None and want_gender != cur_gender)
+        if want_nat != m.nature or want_shiny != m.shiny or gender_changed:
+            if self.rom_path:
+                m.pv = self.save.reroll_pv(m, nature=want_nat, shiny=want_shiny, gender=want_gender)
+            else:
+                QMessageBox.information(self, "Needs ROM",
+                    "Load the ROM to change nature, gender, or shininess safely.")
         if kind == "party":
             self.save.set_level(m, self.sp_level.value())
             if self.rom_path: self.save.recompute_stats(m)
@@ -269,7 +333,7 @@ class Editor(QMainWindow):
         else:
             self.save.write_box_mon(ref, m)
         bad = self.save.verify_checksums()
-        self.populate_list(); self.status()
+        self.populate_list(); self.status(); self.refresh_fields()
         QMessageBox.information(self, "Applied",
             f"Changes written to the in-memory save.\nChecksums: {'OK' if not bad else 'BAD '+str(bad)}\n\n"
             "Use “Save As…” to write the .sav file.")

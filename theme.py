@@ -1,10 +1,3 @@
-"""
-theme.py -- skeuomorphic "handheld console" theme for the Seaglass Save Editor.
-
-Aesthetic: brushed dark-emerald device shell, raised frosted-glass plates with
-soft drop shadows, an inset LCD screen for the party/box list, tactile pressable
-buttons, and grooved (recessed) input fields. Tweak the palette below to taste.
-"""
 from PySide6.QtWidgets import QGroupBox, QGraphicsDropShadowEffect, QPushButton, QLabel
 from PySide6.QtGui import QColor, QFont
 
@@ -30,6 +23,16 @@ QMainWindow, QWidget#root {{
 }}
 QLabel {{ color: #dff0e7; background: transparent; }}
 QGroupBox QLabel {{ color: {ENGRAVE}; }}
+
+QCheckBox {{
+    color: #000000;
+    background: transparent;
+    spacing: 6px;
+}}
+
+QCheckBox:disabled {{
+    color: #000000;
+}}
 
 /* ---- LCD header ---- */
 QLabel#header {{
@@ -115,19 +118,32 @@ QComboBox, QLineEdit, QSpinBox {{
     border: 1px solid {FIELD_BD};
     border-top: 2px solid #6b8a7b;
     border-radius: 8px;
-    padding: 4px 8px;
+    padding: 5px 10px;
+    min-height: 22px;
     color: #16302a;
     selection-background-color: {ACCENT1};
     selection-color: #ffffff;
 }}
 QComboBox:focus, QLineEdit:focus, QSpinBox:focus {{ border: 1px solid {ACCENT0}; border-top: 2px solid {ACCENT1}; }}
-QComboBox::drop-down {{ border: 0; width: 22px; }}
+QComboBox::drop-down {{ border: 0; width: 26px; }}
+QComboBox::down-arrow {{
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 7px solid #2f5a48;
+    margin-right: 9px;
+}}
 QComboBox QAbstractItemView {{
     background: #eef5f0;
+    color: #000000;
     border: 1px solid {FIELD_BD};
     selection-background-color: {ACCENT1};
     selection-color: #ffffff;
     outline: 0;
+}}
+
+QComboBox QAbstractItemView::item {{
+    color: #000000;
 }}
 QSpinBox::up-button, QSpinBox::down-button {{
     width: 16px; background: #d2e3d8; border-left: 1px solid {FIELD_BD};

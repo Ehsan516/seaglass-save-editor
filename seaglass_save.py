@@ -39,10 +39,14 @@ ROM_STRIDE = 0xD0
 ROM_STATS_REL = -0x2c      # base stats relative to name addr
 ROM_GENDER_REL = -0x2c + 0x12
 SHEDINJA = 292
+SHINY_THRESHOLD = 8   # shiny if (TID^SID^PVhi^PVlo) < this (Gen3 determination)
 MOVE_NAME_PTR1 = 0x6d2a18   # gMovesInfo[1].name pointer field
 MOVE_INFO_STRIDE = 0x38
 ITEM_NAME_BASE = 0x67e77c    # gItemsInfo[0].name (embedded), stride 0x54
 ITEM_STRIDE = 0x54
+ABILITY_NAME_BASE = 0x6e15b0   # gAbilitiesInfo names, stride 0x1c (vanilla ability IDs)
+ABILITY_STRIDE = 0x1c
+SPECIES_ABILITIES_REL = -0x2c + 0x18   # abilities[3] (slot0,slot1,hidden) u8 each
 
 NATURES = ["Hardy","Lonely","Brave","Adamant","Naughty","Bold","Docile","Relaxed",
 "Impish","Lax","Timid","Hasty","Serious","Jolly","Naive","Modest","Mild","Quiet",
@@ -177,6 +181,11 @@ class Mon:
         struct.pack_into("<I", self.M, 4, w & 0xFFFFFFFF)
     @property
     def ability_slot(self): return (self._ivword>>31)&1
+    @ability_slot.setter
+    def ability_slot(self, v):
+        w = self._ivword & ~(1<<31)
+        if v: w |= (1<<31)
+        struct.pack_into("<I", self.M, 4, w & 0xFFFFFFFF)
     @property
     def is_egg(self): return bool((self._ivword>>30)&1)
 
@@ -190,7 +199,7 @@ class Mon:
     def ot_name(self): return decode_str(self.raw_head[0x14:0x1B])
     @property
     def shiny(self):
-        return ((self.otid&0xFFFF)^(self.otid>>16)^(self.pv&0xFFFF)^(self.pv>>16))<8
+        return ((self.otid&0xFFFF)^(self.otid>>16)^(self.pv&0xFFFF)^(self.pv>>16))<SHINY_THRESHOLD
     @property
     def level(self):
         return self.party_tail[0x04] if self.is_party else 0
@@ -326,6 +335,23 @@ class SeaglassSave:
                 out.append((m, nm))
         return out
 
+    def ability_name(self, i):
+        if not self.rom: return f"ability{i}"
+        if i == 0: return "(none)"
+        s = decode_str(self.rom[ABILITY_NAME_BASE+i*ABILITY_STRIDE:ABILITY_NAME_BASE+i*ABILITY_STRIDE+13])
+        return s or f"ability{i}"
+
+    def species_abilities(self, sp):
+        """Regular ability slots for a species as [(slot, id, name)] (slots 0 and 1)."""
+        if not self.rom: return [(0, 0, "?")]
+        b = self._name_addr(sp) + SPECIES_ABILITIES_REL
+        a0 = int.from_bytes(self.rom[b:b+2], "little")     # slot 0 @ +0x18
+        a1 = int.from_bytes(self.rom[b+2:b+4], "little")    # slot 1 @ +0x1a
+        out = [(0, a0, self.ability_name(a0))]
+        if a1 and a1 != a0:
+            out.append((1, a1, self.ability_name(a1)))
+        return out
+
     def item_list(self):
         out = [(0, "(none)")]
         for i in range(1, 1300):
@@ -351,23 +377,46 @@ class SeaglassSave:
         return 'F' if (pv&0xFF)<r else 'M'
     @staticmethod
     def _is_shiny(pv,otid):
-        return ((otid&0xFFFF)^(otid>>16)^(pv&0xFFFF)^(pv>>16))<8
+        return ((otid&0xFFFF)^(otid>>16)^(pv&0xFFFF)^(pv>>16))<SHINY_THRESHOLD
 
-    def reroll_pv(self, mon, target_nature):
-        """Find a PV giving target nature, preserving shiny status, gender, ability bit0."""
-        old_sh=self._is_shiny(mon.pv,mon.otid)
-        old_gd=self.gender_of(mon.pv, mon.species)
-        old_b0=mon.pv & 1
-        rng=random.Random(mon.pv ^ 0xA5A5A5A5)
-        for relax in (True,False):       # first try keeping gender, then relax it
-            for _ in range(400000):
-                cand=rng.getrandbits(32)
-                if cand%25!=target_nature: continue
-                if (cand&1)!=old_b0: continue
-                if self._is_shiny(cand,mon.otid)!=old_sh: continue
-                if relax and self.gender_of(cand,mon.species)!=old_gd: continue
-                return cand
-        return mon.pv  # give up (shouldn't happen)
+    def reroll_pv(self, mon, nature=None, shiny=None, gender=None):
+        """Find a PV satisfying the requested nature / shiny / gender.
+        Unspecified constraints keep the current value. Ability is stored
+        separately (Misc bit31), so it is preserved automatically."""
+        if nature is None: nature = mon.nature
+        if shiny is None:  shiny  = self._is_shiny(mon.pv, mon.otid)
+        otid  = mon.otid
+        ratio = self.gender_ratio(mon.species) if self.rom else None
+        fixed = (ratio is None) or (ratio in (0, 254, 255))
+        if fixed or gender is None:
+            gender = self.gender_of(mon.pv, mon.species)
+        tidsid = (otid & 0xFFFF) ^ (otid >> 16)
+        rng = random.Random((mon.pv ^ otid ^ 0x5EA61A55) & 0xFFFFFFFF)
+
+        def gender_ok(pv):
+            if fixed: return True
+            return ('F' if (pv & 0xFF) < ratio else 'M') == gender
+        def low_byte():
+            if fixed: return rng.getrandbits(8)
+            return rng.randrange(0, ratio) if gender == 'F' else rng.randrange(ratio, 256)
+
+        if shiny:
+            # construct PVhi so that PVlo^PVhi^tidsid < SHINY_THRESHOLD
+            for _ in range(2_000_000):
+                pvlo = (rng.getrandbits(8) << 8) | low_byte()
+                pvhi = (pvlo ^ tidsid ^ rng.randrange(SHINY_THRESHOLD)) & 0xFFFF
+                pv = (pvhi << 16) | pvlo
+                if pv % 25 == nature and gender_ok(pv) and self._is_shiny(pv, otid):
+                    return pv
+            return mon.pv
+        else:
+            for _ in range(2_000_000):
+                pv = rng.getrandbits(32)
+                if pv % 25 != nature: continue
+                if self._is_shiny(pv, otid): continue
+                if not gender_ok(pv): continue
+                return pv
+            return mon.pv
 
     # ---- stat recompute (party) ----
     def recompute_stats(self, mon):
