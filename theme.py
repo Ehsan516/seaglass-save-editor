@@ -101,6 +101,16 @@ QPushButton#primary:pressed {{
     border-top: 3px solid #0f4d2f;
     padding-top: 9px;
 }}
+QCheckBox {{
+    color: #16302a;
+    background: transparent;
+    font-weight: 700;
+    spacing: 8px;
+}}
+
+QCheckBox:disabled {{
+    color: #5f7e6f;
+}}
 
 /* ---- grooved (recessed) inputs ---- */
 QComboBox, QLineEdit, QSpinBox {{
@@ -125,10 +135,15 @@ QComboBox::down-arrow {{
 }}
 QComboBox QAbstractItemView {{
     background: #eef5f0;
+    color: #16302a;
     border: 1px solid {FIELD_BD};
     selection-background-color: {ACCENT1};
     selection-color: #ffffff;
     outline: 0;
+}}
+
+QComboBox QAbstractItemView::item {{
+    color: #16302a;
 }}
 QSpinBox::up-button, QSpinBox::down-button {{
     width: 16px; background: #d2e3d8; border-left: 1px solid {FIELD_BD};
