@@ -2,10 +2,11 @@
 
 A little save editor for **Pokémon Emerald Seaglass**. PKHeX and the usual tools don't understand Seaglass — it's built on pokeemerald-expansion, which renumbers all the species, moves, and items — so I made one that does.
 
+![Seaglass Save Editor](docs/screenshot.png)
 
 ## Get it
 
-Download **SeaglassSaveEditor.exe** from here as a zip and hten unzip and run the exe in the /dist folder.
+Download **SeaglassSaveEditor.exe** from the [Releases](../../releases) page and double-click it. No Python, no install, nothing to set up.
 
 > Windows might show an "unknown publisher" warning the first time — it's just an unsigned hobby app, click **More info → Run anyway**.
 
@@ -13,7 +14,7 @@ Download **SeaglassSaveEditor.exe** from here as a zip and hten unzip and run th
 
 - The editor (above)
 - Your Seaglass **`.gba`** ROM
-- Your **`.sav`** file
+- Your save file — a **`.sav`** (mGBA / VBA / GodMode9 dump) or **`.srm`** (RetroArch)
 
 The ROM isn't optional — it's where the Pokémon/move/item names come from and it keeps your edits valid. No ROM is included; bring your own.
 
@@ -38,6 +39,8 @@ If you play Seaglass as a VC game on a hacked 3DS/2DS, the save lives inside the
 
 If you run the ROM through open_agb_firm instead, the save is just a plain `.sav` in `/3ds/open_agb_firm/saves/` — swap the file and you're done.
 
+On **RetroArch** (PC, Android, etc.), your save is the `.srm` next to the ROM — open it, edit, Save As, and put it back. Nothing else needed.
+
 ## Heads up
 
 - **Back up your save before editing.** Always.
@@ -57,3 +60,4 @@ Python 3.9+. Keep `seaglass_editor.py`, `seaglass_save.py`, and `theme.py` toget
 - **Pokémon Emerald Seaglass** by Nemo622 — https://ko-fi.com/nemo622
 - Built on [pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion)
 
+MIT licensed — do what you like with it.

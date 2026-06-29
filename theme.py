@@ -24,16 +24,6 @@ QMainWindow, QWidget#root {{
 QLabel {{ color: #dff0e7; background: transparent; }}
 QGroupBox QLabel {{ color: {ENGRAVE}; }}
 
-QCheckBox {{
-    color: #000000;
-    background: transparent;
-    spacing: 6px;
-}}
-
-QCheckBox:disabled {{
-    color: #000000;
-}}
-
 /* ---- LCD header ---- */
 QLabel#header {{
     background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {LCD0}, stop:1 {LCD1});
@@ -135,15 +125,10 @@ QComboBox::down-arrow {{
 }}
 QComboBox QAbstractItemView {{
     background: #eef5f0;
-    color: #000000;
     border: 1px solid {FIELD_BD};
     selection-background-color: {ACCENT1};
     selection-color: #ffffff;
     outline: 0;
-}}
-
-QComboBox QAbstractItemView::item {{
-    color: #000000;
 }}
 QSpinBox::up-button, QSpinBox::down-button {{
     width: 16px; background: #d2e3d8; border-left: 1px solid {FIELD_BD};
@@ -185,6 +170,8 @@ QToolBar QToolButton:pressed {{ background: rgba(31,125,79,0.40); }}
 QStatusBar {{ background: {BEZEL}; color: #bfe0cf; }}
 QStatusBar::item {{ border: 0; }}
 QSplitter::handle {{ background: transparent; }}
+QScrollArea#editorScroll {{ background: transparent; border: 0; }}
+QScrollArea#editorScroll > QWidget > QWidget {{ background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 12px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: #5f8170; border-radius: 5px; min-height: 24px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}

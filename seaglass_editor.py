@@ -15,7 +15,7 @@ try:
         QApplication, QMainWindow, QWidget, QSplitter, QListWidget, QListWidgetItem,
         QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QGroupBox, QLabel,
         QComboBox, QSpinBox, QLineEdit, QPushButton, QFileDialog, QMessageBox,
-        QToolBar, QStatusBar, QCompleter, QCheckBox)
+        QToolBar, QStatusBar, QCompleter, QCheckBox, QScrollArea, QFrame)
     from PySide6.QtCore import Qt, QEvent
     from PySide6.QtGui import QAction, QFont
 except ImportError:
@@ -87,7 +87,12 @@ class Editor(QMainWindow):
         rl = QVBoxLayout(right); rl.setSpacing(12)
         wrap = QWidget(); wl = QHBoxLayout(wrap); wl.setContentsMargins(0, 0, 0, 0)
         wl.addStretch(1); wl.addWidget(right); wl.addStretch(1)
-        split.addWidget(wrap)
+        scroll = QScrollArea(); scroll.setObjectName("editorScroll")
+        scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(wrap); scroll.viewport().setAutoFillBackground(False)
+        wrap.setAutoFillBackground(False)
+        split.addWidget(scroll)
         split.setStretchFactor(1, 1); split.setSizes([260, 780])
 
         # --- Identity ---
@@ -166,7 +171,7 @@ class Editor(QMainWindow):
 
     # ---------------- load ----------------
     def act_open_save(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Open save", "", "Saves (*.sav);;All (*)")
+        p, _ = QFileDialog.getOpenFileName(self, "Open save", "", "Saves (*.sav *.srm);;All files (*)")
         if p: self.load_save(p, self.rom_path)
     def act_open_rom(self):
         p, _ = QFileDialog.getOpenFileName(self, "Open ROM", "", "GBA (*.gba);;All (*)")
@@ -300,11 +305,11 @@ class Editor(QMainWindow):
     def apply(self):
         if not self.cur: return
         kind, ref, m = self.cur
-        sp = self.cb_species.currentData()
-        if sp is None:
-            txt = self.cb_species.currentText().split("(#")[-1].rstrip(")").lstrip("#")
-            sp = int(txt) if txt.isdigit() else m.species
-        m.species = sp
+        # species: change ONLY if a real dropdown item is selected — otherwise keep
+        # the current one (prevents corrupting species that aren't in the list)
+        cb = self.cb_species
+        if cb.currentData() is not None and cb.currentText() == cb.itemText(cb.currentIndex()):
+            m.species = cb.currentData()
         m.nickname = self.le_nick.text()
         m.friendship = self.sp_friend.value()
         m.held_item = self._combo_id(self.cb_item, self._item_name2id, m.held_item)
@@ -341,7 +346,8 @@ class Editor(QMainWindow):
     def act_save_as(self):
         if not self.save: return
         base = os.path.splitext(os.path.basename(self.save.path))[0]
-        p, _ = QFileDialog.getSaveFileName(self, "Save As", base + "_edited.sav", "Saves (*.sav)")
+        ext = ".srm" if self.save.path.lower().endswith(".srm") else ".sav"
+        p, _ = QFileDialog.getSaveFileName(self, "Save As", base + "_edited" + ext, "Saves (*.sav *.srm)")
         if not p: return
         if os.path.abspath(p) == os.path.abspath(self.save.path):
             if QMessageBox.question(self, "Overwrite original?",

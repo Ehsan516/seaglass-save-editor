@@ -362,7 +362,7 @@ class SeaglassSave:
 
     def species_list(self):
         out=[]
-        for sp in range(1,1301):
+        for sp in range(1,1600):
             nm=self.species_name(sp)
             if nm and not nm.startswith('#') and nm[0].isalpha():
                 out.append((sp,nm))
