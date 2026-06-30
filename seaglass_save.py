@@ -63,6 +63,14 @@ _CH[0xB4] = "'"
 _CH[0x1B] = 'é'
 _REV = {v:k for k,v in _CH.items()}
 
+def _enc(txt):
+    """Encode ASCII to the GBA character set for ROM searching (empty if unmappable)."""
+    out=bytearray()
+    for ch in txt:
+        if ch not in _REV: return b""
+        out.append(_REV[ch])
+    return bytes(out)
+
 def decode_str(b):
     out=[]
     for c in b:
@@ -246,7 +254,12 @@ class SeaglassSave:
         self.data=bytearray(open(save_path,"rb").read())
         self.rom=open(rom_path,"rb").read() if rom_path else None
         self.sections={}; self.active_slot=None; self.save_counter=-1
+        # ROM table offsets: auto-detected per ROM (default to known v3.0 values)
+        self.name_sp1=ROM_NAME_SP1; self.sp_stride=ROM_STRIDE
+        self.move_ptr1=MOVE_NAME_PTR1; self.item_base=ITEM_NAME_BASE; self.ability_base=ABILITY_NAME_BASE
+        self.rom_ok=True
         self._load_slots()
+        if self.rom: self._detect_offsets()
 
     # ---- slot handling ----
     def _slot_sections(self, base):
@@ -317,8 +330,68 @@ class SeaglassSave:
             touched.add(sid)
         for sid in touched: self._fix_section_checksum(sid)
 
+    def _detect_offsets(self):
+        """Auto-locate ROM name tables so the editor works across Seaglass builds.
+        Falls back to v3.0 defaults; sets rom_ok=False if a table can't be verified."""
+        rom=self.rom
+        def find(sub, start=0):
+            e=_enc(sub); return rom.find(e, start) if e else -1
+        def findterm(sub):           # name followed by 0xFF terminator (exact match)
+            e=_enc(sub); return rom.find(e+b"\xFF") if e else -1
+        ok=True
+
+        # species (gSpeciesInfo.name): the Bulbasaur whose table has Ivysaur at
+        # +stride and Venusaur at +2*stride (skips the separate plain-name array).
+        pos=0; found=False
+        while True:
+            cand=find("Bulbasaur", pos)
+            if cand<0: break
+            iv=find("Ivysaur", cand)
+            if iv>cand:
+                stride=iv-cand
+                if 0x80<=stride<=0x200 and decode_str(rom[cand+2*stride:cand+2*stride+8])=="Venusaur":
+                    self.name_sp1=cand; self.sp_stride=stride; found=True; break
+            pos=cand+1
+        if not found: ok=False
+
+        # move-name pointer table: pointer to "Karate Chop" name (move 2)
+        kc=findterm("Karate Chop")
+        if kc>=0:
+            t=0x08000000|kc
+            L=rom.find(bytes([t&0xFF,(t>>8)&0xFF,(t>>16)&0xFF,(t>>24)&0xFF]))
+            if L>=0: self.move_ptr1=L-MOVE_INFO_STRIDE
+            else: ok=False
+        else: ok=False
+
+        # item table: "Master Ball" (item 4); verify item 1 reads as Poke Ball
+        pos=0; found=False
+        while True:
+            mb=findterm("Master Ball")
+            if mb<0: break
+            cand=mb-4*ITEM_STRIDE
+            if decode_str(rom[cand+ITEM_STRIDE:cand+ITEM_STRIDE+14]).startswith("Pok"):
+                self.item_base=cand; found=True; break
+            # search next occurrence
+            nxt=rom.find(_enc("Master Ball")+b"\xFF", mb+1)
+            if nxt<0: break
+            mb=nxt
+        if not found: ok=False
+
+        # ability table: "Overgrow" + terminator (id 65) -> avoids "Overgrowth"
+        og=findterm("Overgrow")
+        if og>=0: self.ability_base=og-65*ABILITY_STRIDE
+        else: ok=False
+
+        try:
+            if not (self.species_name(1).startswith("Bulbas") and self.move_name(1)=="Pound"
+                    and self.item_name(1).startswith("Pok") and self.ability_name(65)=="Overgrow"):
+                ok=False
+        except Exception:
+            ok=False
+        self.rom_ok=ok
+
     # ---- ROM lookups ----
-    def _name_addr(self, sp): return ROM_NAME_SP1+(sp-1)*ROM_STRIDE
+    def _name_addr(self, sp): return self.name_sp1+(sp-1)*self.sp_stride
     def species_name(self, sp):
         if not self.rom or sp==0: return f"#{sp}"
         a=self._name_addr(sp)
@@ -331,7 +404,7 @@ class SeaglassSave:
     def move_name(self, m):
         if not self.rom: return f"move{m}"
         if m == 0: return "—"
-        p = MOVE_NAME_PTR1 + (m-1)*MOVE_INFO_STRIDE
+        p = self.move_ptr1 + (m-1)*MOVE_INFO_STRIDE
         ptr = int.from_bytes(self.rom[p:p+4], "little")
         if not (0x08000000 <= ptr < 0x0A000000): return f"move{m}"
         return decode_str(self.rom[ptr-0x08000000:ptr-0x08000000+16]) or f"move{m}"
@@ -339,11 +412,13 @@ class SeaglassSave:
     def item_name(self, i):
         if not self.rom: return f"item{i}"
         if i == 0: return "(none)"
-        s = decode_str(self.rom[ITEM_NAME_BASE+i*ITEM_STRIDE:ITEM_NAME_BASE+i*ITEM_STRIDE+14])
+        s = decode_str(self.rom[self.item_base+i*ITEM_STRIDE:self.item_base+i*ITEM_STRIDE+14])
         return s or f"item{i}"
 
     def move_list(self):
         out = [(0, "—")]
+        if not self.rom or self.move_name(1) != "Pound":   # table not resolved
+            return out
         for m in range(1, 1000):
             nm = self.move_name(m)
             if nm and not nm.startswith("move") and any(c.isalnum() for c in nm):
@@ -353,7 +428,7 @@ class SeaglassSave:
     def ability_name(self, i):
         if not self.rom: return f"ability{i}"
         if i == 0: return "(none)"
-        s = decode_str(self.rom[ABILITY_NAME_BASE+i*ABILITY_STRIDE:ABILITY_NAME_BASE+i*ABILITY_STRIDE+13])
+        s = decode_str(self.rom[self.ability_base+i*ABILITY_STRIDE:self.ability_base+i*ABILITY_STRIDE+13])
         return s or f"ability{i}"
 
     def species_abilities(self, sp):
@@ -391,7 +466,7 @@ class SeaglassSave:
 
     def sprite_rgba(self, species, shiny=False):
         """Front sprite for a species as (w, h, RGBA8888 bytes), or None.
-        Front-pic pointer @ struct+0x60, normal palette +0x68, shiny palette +0x70."""
+        Front-pic pointer @ struct+0x58, normal palette +0x68, shiny palette +0x70."""
         if not self.rom: return None
         try:
             base = self._name_addr(species) - 0x2c
@@ -421,6 +496,8 @@ class SeaglassSave:
 
     def item_list(self):
         out = [(0, "(none)")]
+        if not self.rom or not self.item_name(1).startswith("Pok"):
+            return out
         for i in range(1, 1300):
             nm = self.item_name(i)
             if nm and not nm.startswith("item") and any(c.isalnum() for c in nm):
@@ -429,6 +506,8 @@ class SeaglassSave:
 
     def species_list(self):
         out=[]
+        if not self.rom or not self.species_name(1).startswith("Bulbas"):
+            return out
         for sp in range(1,1600):
             nm=self.species_name(sp)
             if _looks_like_species(nm):

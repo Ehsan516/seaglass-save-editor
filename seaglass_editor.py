@@ -206,11 +206,24 @@ class Editor(QMainWindow):
         for mv in self.cb_move: self._fill_combo(mv, moves)
         self._fill_combo(self.cb_item, items)
         self.populate_list(); self.status()
+        if rom_path and not self.save.rom_ok:
+            QMessageBox.warning(self, "ROM not recognised",
+                "This file doesn't look like a supported Pokémon Emerald Seaglass ROM, "
+                "so Pokémon / move / item names and sprites may be missing or wrong.\n\n"
+                "Make sure you opened the Seaglass .gba itself (not a different game), and "
+                "that it matches the version your save was made on. If you're on a newer or "
+                "older Seaglass release and this keeps happening, let me know which version "
+                "so it can be supported.")
 
     def status(self):
         if not self.save: return
         bad = self.save.verify_checksums(); t = self.save.trainer()
-        rom = "ROM loaded" if self.rom_path else "no ROM — load it for names/stats"
+        if not self.rom_path:
+            rom = "no ROM — load it for names/stats"
+        elif not self.save.rom_ok:
+            rom = "ROM not recognised — names/sprites may be wrong"
+        else:
+            rom = "ROM loaded"
         self.statusBar().showMessage(
             f"{os.path.basename(self.save.path)} | Trainer {t['name']} | "
             f"slot {'AB'[self.save.active_slot]} | "
