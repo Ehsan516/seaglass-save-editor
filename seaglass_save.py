@@ -78,6 +78,21 @@ def encode_str(s, length):
     out += b'\xFF'*(length+1-len(out))
     return bytes(out[:length+1])
 
+_SPECIES_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -.':♀♂éÉèàâ")
+def _looks_like_species(nm):
+    """True only for real Pokemon names; filters ROM garbage past the table end."""
+    if not nm: return False
+    s = nm.strip()
+    if len(s) < 3 or not s[0].isupper(): return False
+    if any(c not in _SPECIES_ALLOWED for c in s): return False
+    core = "".join(c for c in s if c.isalpha())
+    if len(set(core)) <= 1: return False                          # fff, VVV, eee
+    if not any(c in "aeiouyAEIOUYéèàâ" for c in s): return False  # no vowel
+    if any(c.isdigit() and i != len(s)-1 for i, c in enumerate(s)): return False  # digit only at end
+    toks = s.split()
+    if len(toks) > 1 and any(len(t) == 1 for t in toks): return False   # "a v w"
+    return True
+
 # ---------- experience / growth ----------
 def _exp_at(group, n):
     if n<=1: return 0
@@ -352,6 +367,58 @@ class SeaglassSave:
             out.append((1, a1, self.ability_name(a1)))
         return out
 
+    def _lz77(self, off):
+        """GBA BIOS LZ77 (type 0x10) decompression from ROM offset."""
+        if self.rom[off] != 0x10: return None
+        size = self.rom[off+1] | (self.rom[off+2] << 8) | (self.rom[off+3] << 16)
+        if size == 0 or size > 0x4000: return None
+        out = bytearray(); p = off + 4
+        try:
+            while len(out) < size:
+                fl = self.rom[p]; p += 1
+                for b in range(8):
+                    if len(out) >= size: break
+                    if fl & (0x80 >> b):
+                        hi = self.rom[p]; lo = self.rom[p+1]; p += 2
+                        n = (hi >> 4) + 3; disp = ((hi & 0xF) << 8 | lo) + 1
+                        if disp > len(out): return None
+                        for _ in range(n): out.append(out[-disp])
+                    else:
+                        out.append(self.rom[p]); p += 1
+        except IndexError:
+            return None
+        return bytes(out[:size])
+
+    def sprite_rgba(self, species, shiny=False):
+        """Front sprite for a species as (w, h, RGBA8888 bytes), or None.
+        Front-pic pointer @ struct+0x60, normal palette +0x68, shiny palette +0x70."""
+        if not self.rom: return None
+        try:
+            base = self._name_addr(species) - 0x2c
+            pic = int.from_bytes(self.rom[base+0x58:base+0x5c], "little") - 0x08000000  # front sprite
+            palp = int.from_bytes(self.rom[base+(0x70 if shiny else 0x68):base+(0x74 if shiny else 0x6c)], "little") - 0x08000000
+            tiles = self._lz77(pic); palb = self._lz77(palp)
+            if not tiles or not palb or len(tiles) < 2048 or len(palb) < 32: return None
+            pal = []
+            for i in range(16):
+                c = palb[i*2] | (palb[i*2+1] << 8)
+                pal.append(((c & 0x1F)*255//31, ((c >> 5) & 0x1F)*255//31, ((c >> 10) & 0x1F)*255//31, 255))
+            pal[0] = (0, 0, 0, 0)
+            W = H = 64; buf = bytearray(W*H*4)
+            for ty in range(8):
+                for tx in range(8):
+                    t = tiles[(ty*8+tx)*32:(ty*8+tx)*32+32]
+                    for row in range(8):
+                        for col in range(4):
+                            byte = t[row*4+col]
+                            for i, ci in enumerate((byte & 0xF, byte >> 4)):
+                                r, g, b, a = pal[ci]
+                                o = ((ty*8+row)*W + tx*8+col*2+i)*4
+                                buf[o]=r; buf[o+1]=g; buf[o+2]=b; buf[o+3]=a
+            return (W, H, bytes(buf))
+        except Exception:
+            return None
+
     def item_list(self):
         out = [(0, "(none)")]
         for i in range(1, 1300):
@@ -364,7 +431,7 @@ class SeaglassSave:
         out=[]
         for sp in range(1,1600):
             nm=self.species_name(sp)
-            if nm and not nm.startswith('#') and nm[0].isalpha():
+            if _looks_like_species(nm):
                 out.append((sp,nm))
         return out
 

@@ -37,6 +37,11 @@ QLabel#header {{
 }}
 
 /* ---- inset LCD readout ---- */
+QLabel#sprite {{
+    background: rgba(0,0,0,0.22);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 14px;
+}}
 QLabel#info {{
     background: rgba(0,0,0,0.20);
     color: #cfe9da;
@@ -45,7 +50,16 @@ QLabel#info {{
     padding: 8px 10px;
     font-family: "Consolas", "DejaVu Sans Mono", monospace;
 }}
+QCheckBox {{
+    color: #16302a;
+    background: transparent;
+    font-weight: 700;
+    spacing: 8px;
+}}
 
+QCheckBox:disabled {{
+    color: #5f7e6f;
+}}
 /* ---- raised frosted plates ---- */
 QGroupBox {{
     background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {PLATE0}, stop:1 {PLATE1});
@@ -101,16 +115,6 @@ QPushButton#primary:pressed {{
     border-top: 3px solid #0f4d2f;
     padding-top: 9px;
 }}
-QCheckBox {{
-    color: #16302a;
-    background: transparent;
-    font-weight: 700;
-    spacing: 8px;
-}}
-
-QCheckBox:disabled {{
-    color: #5f7e6f;
-}}
 
 /* ---- grooved (recessed) inputs ---- */
 QComboBox, QLineEdit, QSpinBox {{
@@ -124,6 +128,9 @@ QComboBox, QLineEdit, QSpinBox {{
     selection-background-color: {ACCENT1};
     selection-color: #ffffff;
 }}
+QComboBox QAbstractItemView::item {{
+    color: #16302a;
+}}
 QComboBox:focus, QLineEdit:focus, QSpinBox:focus {{ border: 1px solid {ACCENT0}; border-top: 2px solid {ACCENT1}; }}
 QComboBox::drop-down {{ border: 0; width: 26px; }}
 QComboBox::down-arrow {{
@@ -135,15 +142,10 @@ QComboBox::down-arrow {{
 }}
 QComboBox QAbstractItemView {{
     background: #eef5f0;
-    color: #16302a;
     border: 1px solid {FIELD_BD};
     selection-background-color: {ACCENT1};
     selection-color: #ffffff;
     outline: 0;
-}}
-
-QComboBox QAbstractItemView::item {{
-    color: #16302a;
 }}
 QSpinBox::up-button, QSpinBox::down-button {{
     width: 16px; background: #d2e3d8; border-left: 1px solid {FIELD_BD};

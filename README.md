@@ -2,7 +2,6 @@
 
 A little save editor for **Pokémon Emerald Seaglass**. PKHeX and the usual tools don't understand Seaglass — it's built on pokeemerald-expansion, which renumbers all the species, moves, and items — so I made one that does.
 
-![Seaglass Save Editor](docs/screenshot.png)
 
 ## Get it
 
@@ -25,6 +24,8 @@ The ROM isn't optional — it's where the Pokémon/move/item names come from and
 3. Click a Pokémon in the list on the left
 4. Change whatever you want → **Apply to Pokémon**
 5. **Save As** — writes a new file and leaves your original untouched
+
+Every Pokémon in the list shows its **sprite**, and the selected one appears large at the top (its front/battle sprite) — flipping to shiny colours when you tick Shiny. All read straight from the ROM.
 
 You can edit species, nickname, nature, ability, gender, shininess, level, friendship, held item, all four moves, and IVs/EVs. Stats are recalculated automatically, and flipping nature/gender/shiny won't scramble the other two.
 

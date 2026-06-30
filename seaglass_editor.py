@@ -16,8 +16,8 @@ try:
         QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QGroupBox, QLabel,
         QComboBox, QSpinBox, QLineEdit, QPushButton, QFileDialog, QMessageBox,
         QToolBar, QStatusBar, QCompleter, QCheckBox, QScrollArea, QFrame)
-    from PySide6.QtCore import Qt, QEvent
-    from PySide6.QtGui import QAction, QFont
+    from PySide6.QtCore import Qt, QEvent, QSize
+    from PySide6.QtGui import QAction, QFont, QImage, QPixmap, QIcon
 except ImportError:
     sys.exit("PySide6 not installed.  Run:  pip install PySide6")
 
@@ -57,6 +57,7 @@ class Editor(QMainWindow):
         self._species = []
         self._move_name2id = {}
         self._item_name2id = {}
+        self._icon_cache = {}
         self._build_ui()
         if os.path.exists(DEFAULT_SAVE):
             self.load_save(DEFAULT_SAVE,
@@ -79,6 +80,7 @@ class Editor(QMainWindow):
         self.setCentralWidget(root)
 
         self.list = QListWidget(); self.list.setMinimumWidth(250)
+        self.list.setIconSize(QSize(34, 34))
         self.list.currentItemChanged.connect(self.on_select)
         split.addWidget(self.list)
 
@@ -94,6 +96,10 @@ class Editor(QMainWindow):
         wrap.setAutoFillBackground(False)
         split.addWidget(scroll)
         split.setStretchFactor(1, 1); split.setSizes([260, 780])
+
+        self.sprite_label = QLabel(); self.sprite_label.setObjectName("sprite")
+        self.sprite_label.setAlignment(Qt.AlignCenter); self.sprite_label.setFixedHeight(150)
+        rl.addWidget(self.sprite_label)
 
         # --- Identity ---
         idbox = QGroupBox("Identity"); idf = QFormLayout(idbox)
@@ -157,6 +163,8 @@ class Editor(QMainWindow):
         row.addWidget(self.btn_apply); row.addWidget(self.btn_revert)
         rl.addLayout(row); rl.addStretch(1)
         self._set_enabled(False)
+        self.cb_species.currentIndexChanged.connect(self._update_sprite)
+        self.chk_shiny.toggled.connect(self._update_sprite)
 
     def _set_enabled(self, on):
         for w in (self.cb_species, self.le_nick, self.cb_nature, self.cb_ability, self.sp_level,
@@ -215,10 +223,14 @@ class Editor(QMainWindow):
         for i, m in enumerate(self.save.party()):
             it = QListWidgetItem(f"  {i+1}. {self.save.species_name(m.species)}  "
                                  f"Lv{m.level} '{m.nickname}'")
+            ic = self._mon_icon(m.species, m.shiny)
+            if ic: it.setIcon(ic)
             it.setData(Qt.UserRole, ("party", i)); self.list.addItem(it)
         h2 = QListWidgetItem("— PC BOXES —"); h2.setFlags(Qt.NoItemFlags); self.list.addItem(h2)
         for off, m in self.save.box_mons():
             it = QListWidgetItem(f"  {self.save.species_name(m.species)}  '{m.nickname}'")
+            ic = self._mon_icon(m.species, m.shiny)
+            if ic: it.setIcon(ic)
             it.setData(Qt.UserRole, ("box", off)); self.list.addItem(it)
         self.list.blockSignals(False)
 
@@ -237,6 +249,35 @@ class Editor(QMainWindow):
         i = combo.findData(idx)
         if i >= 0: combo.setCurrentIndex(i)
         else: combo.setEditText(fallback_text)
+
+    def _mon_icon(self, species, shiny):
+        if not self.rom_path: return None
+        key = (species, bool(shiny))
+        if key in self._icon_cache: return self._icon_cache[key]
+        res = self.save.sprite_rgba(species, shiny)
+        icon = None
+        if res:
+            W, H, buf = res
+            img = QImage(buf, W, H, QImage.Format_RGBA8888)
+            icon = QIcon(QPixmap.fromImage(img).scaled(34, 34, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self._icon_cache[key] = icon
+        return icon
+
+    def _update_sprite(self):
+        if not self.cur or not self.rom_path:
+            self.sprite_label.clear(); return
+        cb = self.cb_species
+        if cb.currentData() is not None and cb.currentText() == cb.itemText(cb.currentIndex()):
+            sp = cb.currentData()
+        else:
+            sp = self.cur[2].species
+        res = self.save.sprite_rgba(sp, self.chk_shiny.isChecked())
+        if not res:
+            self.sprite_label.clear(); return
+        W, H, buf = res
+        img = QImage(buf, W, H, QImage.Format_RGBA8888)
+        self.sprite_label.setPixmap(
+            QPixmap.fromImage(img).scaled(W*2, H*2, Qt.KeepAspectRatio, Qt.FastTransformation))
 
     def refresh_fields(self):
         if not self.cur: return
@@ -294,6 +335,7 @@ class Editor(QMainWindow):
             f"OT {m.ot_name}   gender {g}   {'SHINY ' if m.shiny else ''}"
             f"ability slot {m.ability_slot}\nbase stats  " +
             "  ".join(f"{l}:{v}" for l, v in zip(STAT_LABELS, base)))
+        self._update_sprite()
 
     # ---------------- apply ----------------
     def _combo_id(self, combo, name2id, fallback):
