@@ -1,0 +1,14 @@
+# Build output -- built via `make` / build-cia.bat and released separately, not committed
+build/
+*.3dsx
+*.elf
+*.smdh
+*.cia
+*.map
+*.lst
+meta/*.bnr
+meta/*.icn
+
+# host test harness binary
+test/test_host
+test/test_host.exe

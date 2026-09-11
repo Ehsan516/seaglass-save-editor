@@ -7,7 +7,8 @@ Run:  python seaglass_editor.py        (Windows: use 'python' or 'py -3.12')
 Deps: pip install PySide6
 """
 import sys, os
-from seaglass_save import SeaglassSave, Mon, NATURES, STAT_KEYS
+from seaglass_save import (SeaglassSave, Mon, NATURES, STAT_KEYS, CONTEST_KEYS,
+                            BALL_NAMES, ORIGIN_GAME_NAMES)
 import theme
 
 try:
@@ -15,7 +16,7 @@ try:
         QApplication, QMainWindow, QWidget, QSplitter, QListWidget, QListWidgetItem,
         QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QGroupBox, QLabel,
         QComboBox, QSpinBox, QLineEdit, QPushButton, QFileDialog, QMessageBox,
-        QToolBar, QStatusBar, QCompleter, QCheckBox, QScrollArea, QFrame)
+        QToolBar, QStatusBar, QCompleter, QCheckBox, QScrollArea, QFrame, QSizePolicy)
     from PySide6.QtCore import Qt, QEvent, QSize
     from PySide6.QtGui import QAction, QFont, QImage, QPixmap, QIcon
 except ImportError:
@@ -26,7 +27,32 @@ DEFAULT_SAVE = "/mnt/user-data/uploads/00040000075C8E00_gbavc.sav"
 DEFAULT_ROM  = "/mnt/user-data/uploads/Pokemon_Emerald_Seaglass_3_0__PokemonEmeraldseaglass_com_.gba"
 
 
-class SearchableComboBox(QComboBox):
+class NoHoverWheelMixin:
+    """Ignores mouse-wheel scrolling unless the widget is focused (clicked/tabbed
+    into first). Without this, Qt changes a spin box or combo's value just from
+    scrolling the panel with the cursor resting over it, which is surprising and
+    easy to trigger by accident. Focus must come from a click or Tab, not the
+    wheel itself, so set focusPolicy to StrongFocus rather than the Qt default."""
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class WheelSafeSpinBox(NoHoverWheelMixin, QSpinBox):
+    pass
+
+
+class WheelSafeComboBox(NoHoverWheelMixin, QComboBox):
+    pass
+
+
+class SearchableComboBox(NoHoverWheelMixin, QComboBox):
     """Editable combo that pops its list open on click and filters as you type."""
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,6 +95,12 @@ class Editor(QMainWindow):
         for txt, fn in [("Open Save…", self.act_open_save), ("Open ROM…", self.act_open_rom),
                         ("Save As…", self.act_save_as)]:
             a = QAction(txt, self); a.triggered.connect(fn); tb.addAction(a)
+        spacer = QWidget(); spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        tb.addWidget(spacer)
+        self.theme_name = theme.DEFAULT_THEME
+        self.btn_theme = QPushButton(self._other_theme_label())
+        self.btn_theme.clicked.connect(self.toggle_theme)
+        tb.addWidget(self.btn_theme)
         self.setStatusBar(QStatusBar())
 
         root = QWidget(); root.setObjectName("root")
@@ -106,12 +138,12 @@ class Editor(QMainWindow):
         idf.setSpacing(8)
         self.cb_species = SearchableComboBox()
         self.le_nick = QLineEdit(); self.le_nick.setMaxLength(10)
-        self.cb_nature = QComboBox(); self.cb_nature.addItems(NATURES)
-        self.cb_ability = QComboBox()
-        self.cb_gender = QComboBox()
+        self.cb_nature = WheelSafeComboBox(); self.cb_nature.addItems(NATURES)
+        self.cb_ability = WheelSafeComboBox()
+        self.cb_gender = WheelSafeComboBox()
         self.chk_shiny = QCheckBox("Shiny")
-        self.sp_level = QSpinBox(); self.sp_level.setRange(1, 100)
-        self.sp_friend = QSpinBox(); self.sp_friend.setRange(0, 255)
+        self.sp_level = WheelSafeSpinBox(); self.sp_level.setRange(1, 100)
+        self.sp_friend = WheelSafeSpinBox(); self.sp_friend.setRange(0, 255)
         self.cb_item = SearchableComboBox()
         idf.addRow("Species", self.cb_species)
         idf.addRow("Nickname", self.le_nick)
@@ -130,12 +162,15 @@ class Editor(QMainWindow):
         # --- Moves ---
         mvbox = QGroupBox("Moves"); mg = QGridLayout(mvbox)
         mg.addWidget(QLabel("Move"), 0, 1); mg.addWidget(QLabel("PP"), 0, 2)
-        self.cb_move = []; self.sp_pp = []
+        mg.addWidget(QLabel("PP Up"), 0, 3)
+        self.cb_move = []; self.sp_pp = []; self.sp_ppup = []
         for i in range(4):
             mv = SearchableComboBox()
-            pp = QSpinBox(); pp.setRange(0, 99); pp.setMaximumWidth(80)
-            self.cb_move.append(mv); self.sp_pp.append(pp)
-            mg.addWidget(QLabel(f"{i+1}"), i+1, 0); mg.addWidget(mv, i+1, 1); mg.addWidget(pp, i+1, 2)
+            pp = WheelSafeSpinBox(); pp.setRange(0, 99); pp.setMaximumWidth(80)
+            ppup = WheelSafeSpinBox(); ppup.setRange(0, 3); ppup.setMaximumWidth(60)
+            self.cb_move.append(mv); self.sp_pp.append(pp); self.sp_ppup.append(ppup)
+            mg.addWidget(QLabel(f"{i+1}"), i+1, 0); mg.addWidget(mv, i+1, 1)
+            mg.addWidget(pp, i+1, 2); mg.addWidget(ppup, i+1, 3)
         mg.setColumnStretch(1, 1)
         rl.addWidget(mvbox)
 
@@ -146,8 +181,8 @@ class Editor(QMainWindow):
         for c, lab in enumerate(STAT_LABELS):
             sg.addWidget(QLabel(lab), 0, c+2, alignment=Qt.AlignCenter)
         for c in range(6):
-            iv = QSpinBox(); iv.setRange(0, 31)
-            ev = QSpinBox(); ev.setRange(0, 252); ev.valueChanged.connect(self._ev_total)
+            iv = WheelSafeSpinBox(); iv.setRange(0, 31)
+            ev = WheelSafeSpinBox(); ev.setRange(0, 252); ev.valueChanged.connect(self._ev_total)
             self.sp_iv.append(iv); self.sp_ev.append(ev)
             sg.addWidget(iv, 1, c+2); sg.addWidget(ev, 2, c+2)
         btn_maxiv = QPushButton("Max IVs"); btn_maxiv.clicked.connect(
@@ -155,6 +190,43 @@ class Editor(QMainWindow):
         self.lbl_evtot = QLabel("EV total: 0 / 510")
         sg.addWidget(btn_maxiv, 1, 0, 1, 2); sg.addWidget(self.lbl_evtot, 2, 0, 1, 2)
         rl.addWidget(statbox)
+
+        # --- Contest stats ---
+        constbox = QGroupBox("Contest Stats (0–255)"); cg = QGridLayout(constbox)
+        self.sp_contest = {}
+        for c, key in enumerate(CONTEST_KEYS):
+            cg.addWidget(QLabel(key.capitalize()), 0, c, alignment=Qt.AlignCenter)
+            sp = WheelSafeSpinBox(); sp.setRange(0, 255)
+            self.sp_contest[key] = sp
+            cg.addWidget(sp, 1, c)
+        rl.addWidget(constbox)
+
+        # --- Origin & status ---
+        obox = QGroupBox("Origin & Status"); of = QFormLayout(obox)
+        of.setSpacing(8)
+        prow = QHBoxLayout()
+        self.sp_pokerus_strain = WheelSafeSpinBox(); self.sp_pokerus_strain.setRange(0, 15)
+        self.sp_pokerus_days = WheelSafeSpinBox(); self.sp_pokerus_days.setRange(0, 15)
+        prow.addWidget(QLabel("Strain")); prow.addWidget(self.sp_pokerus_strain)
+        prow.addWidget(QLabel("Days left")); prow.addWidget(self.sp_pokerus_days)
+        prow.addStretch(1)
+        pwrap = QWidget(); pwrap.setLayout(prow)
+        of.addRow("Pokérus", pwrap)
+        self.sp_met_level = WheelSafeSpinBox(); self.sp_met_level.setRange(0, 100)
+        of.addRow("Met level", self.sp_met_level)
+        self.sp_met_location = WheelSafeSpinBox(); self.sp_met_location.setRange(0, 255)
+        self.sp_met_location.setToolTip("Raw location-table index; not decoded to a name yet.")
+        of.addRow("Met location #", self.sp_met_location)
+        self.cb_origin_game = WheelSafeComboBox()
+        for i, nm in enumerate(ORIGIN_GAME_NAMES): self.cb_origin_game.addItem(nm, i)
+        of.addRow("Origin game", self.cb_origin_game)
+        self.cb_ball = WheelSafeComboBox()
+        for i, nm in enumerate(BALL_NAMES): self.cb_ball.addItem(nm, i)
+        of.addRow("Caught in", self.cb_ball)
+        self.cb_ot_gender = WheelSafeComboBox()
+        self.cb_ot_gender.addItem("Male", 0); self.cb_ot_gender.addItem("Female", 1)
+        of.addRow("OT gender", self.cb_ot_gender)
+        rl.addWidget(obox)
 
         row = QHBoxLayout()
         self.btn_apply = QPushButton("Apply to Pokémon"); self.btn_apply.setObjectName("primary")
@@ -166,11 +238,22 @@ class Editor(QMainWindow):
         self.cb_species.currentIndexChanged.connect(self._update_sprite)
         self.chk_shiny.toggled.connect(self._update_sprite)
 
+    def _other_theme_label(self):
+        return "Emerald theme" if self.theme_name == "teal" else "Teal theme"
+
+    def toggle_theme(self):
+        self.theme_name = "emerald" if self.theme_name == "teal" else "teal"
+        theme.apply_theme(QApplication.instance(), self, self.theme_name)
+        self.btn_theme.setText(self._other_theme_label())
+
     def _set_enabled(self, on):
         for w in (self.cb_species, self.le_nick, self.cb_nature, self.cb_ability, self.sp_level,
                   self.sp_friend, self.cb_item, self.cb_gender, self.chk_shiny,
                   self.btn_apply, self.btn_revert,
-                  *self.cb_move, *self.sp_pp, *self.sp_iv, *self.sp_ev):
+                  self.sp_pokerus_strain, self.sp_pokerus_days, self.sp_met_level,
+                  self.sp_met_location, self.cb_origin_game, self.cb_ball, self.cb_ot_gender,
+                  *self.cb_move, *self.sp_pp, *self.sp_ppup, *self.sp_iv, *self.sp_ev,
+                  *self.sp_contest.values()):
             w.setEnabled(on)
 
     def _ev_total(self):
@@ -338,10 +421,21 @@ class Editor(QMainWindow):
         for i in range(4):
             self._set_combo(self.cb_move[i], m.moves[i], self.save.move_name(m.moves[i]))
             self.sp_pp[i].setValue(m.pp[i])
+        ppup = m.pp_up
+        for i in range(4): self.sp_ppup[i].setValue(ppup[i])
         ivs, evs = m.ivs, m.evs
         for i, k in enumerate(STAT_KEYS):
             self.sp_iv[i].setValue(ivs[k]); self.sp_ev[i].setValue(evs[k])
         self._ev_total()
+        contest = m.contest
+        for k, sp in self.sp_contest.items(): sp.setValue(contest[k])
+        self.sp_pokerus_strain.setValue(m.pokerus_strain)
+        self.sp_pokerus_days.setValue(m.pokerus_days)
+        self.sp_met_level.setValue(m.met_level)
+        self.sp_met_location.setValue(m.met_location)
+        self.cb_origin_game.setCurrentIndex(m.origin_game)
+        self.cb_ball.setCurrentIndex(m.poke_ball)
+        self.cb_ot_gender.setCurrentIndex(m.ot_gender)
         base = self.save.base_stats(m.species) if self.rom_path else [0]*6
         g = self.save.gender_of(m.pv, m.species) if self.rom_path else "?"
         self.lbl_info.setText(
@@ -370,8 +464,16 @@ class Editor(QMainWindow):
         m.held_item = self._combo_id(self.cb_item, self._item_name2id, m.held_item)
         m.moves = [self._combo_id(self.cb_move[i], self._move_name2id, m.moves[i]) for i in range(4)]
         m.pp = [w.value() for w in self.sp_pp]
+        m.pp_up = [w.value() for w in self.sp_ppup]
         m.ivs = {k: self.sp_iv[i].value() for i, k in enumerate(STAT_KEYS)}
         m.evs = {k: self.sp_ev[i].value() for i, k in enumerate(STAT_KEYS)}
+        m.contest = {k: sp.value() for k, sp in self.sp_contest.items()}
+        m.set_pokerus(self.sp_pokerus_strain.value(), self.sp_pokerus_days.value())
+        m.met_level = self.sp_met_level.value()
+        m.met_location = self.sp_met_location.value()
+        m.origin_game = self.cb_origin_game.currentData()
+        m.poke_ball = self.cb_ball.currentData()
+        m.ot_gender = self.cb_ot_gender.currentData()
         if self.cb_ability.isEnabled() and self.rom_path:
             m.ability_slot = self.cb_ability.currentData()
         # nature / gender / shiny -> one PV reroll preserving the others

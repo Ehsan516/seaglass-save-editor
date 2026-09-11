@@ -54,6 +54,14 @@ NATURES = ["Hardy","Lonely","Brave","Adamant","Naughty","Bold","Docile","Relaxed
 SUBSTRUCT_ORDER = ["GAEM","GAME","GEAM","GEMA","GMAE","GMEA","AGEM","AGME","AEGM","AEMG",
 "AMGE","AMEG","EGAM","EGMA","EAGM","EAMG","EMGA","EMAG","MGAE","MGEA","MAGE","MAEG","MEGA","MEAG"]
 STAT_KEYS = ["hp","atk","defense","speed","spatk","spdef"]   # internal/stored order
+CONTEST_KEYS = ["cool","beauty","cute","smart","tough","sheen"]   # Substruct E, +0x06
+
+# poke_ball / origin_game indices are vanilla-fixed (like ability IDs, see 4.4);
+# the expansion does not renumber them.
+BALL_NAMES = ["?","Master Ball","Ultra Ball","Great Ball","Poke Ball","Safari Ball",
+"Net Ball","Dive Ball","Nest Ball","Repeat Ball","Timer Ball","Luxury Ball","Premier Ball"]
+ORIGIN_GAME_NAMES = ["?","Sapphire","Ruby","Emerald","FireRed","LeafGreen","?","?","?",
+"?","?","?","?","?","?","Colosseum/XD"]
 
 _CH = {0x00:' ', 0xAE:'-', 0xAD:'.', 0xBA:'/', 0xAB:'!', 0xAC:'?'}
 for _i in range(10): _CH[0xA1+_i] = chr(48+_i)
@@ -184,12 +192,26 @@ class Mon:
     @pp.setter
     def pp(self, p):
         for i,v in enumerate(p[:4]): self.A[8+i]=v & 0xFF
+    @property
+    def pp_up(self):
+        """PP-Up count per move (0-3 each), packed 2 bits/move in Growth+0x08."""
+        b=self.G[8]; return [(b>>(2*i))&3 for i in range(4)]
+    @pp_up.setter
+    def pp_up(self, vals):
+        b=0
+        for i,v in enumerate(vals[:4]): b |= (v&3)<<(2*i)
+        self.G[8]=b
 
     @property
     def evs(self): return {k:self.E[i] for i,k in enumerate(STAT_KEYS)}
     @evs.setter
     def evs(self, d):
         for i,k in enumerate(STAT_KEYS): self.E[i]=d[k] & 0xFF
+    @property
+    def contest(self): return {k:self.E[6+i] for i,k in enumerate(CONTEST_KEYS)}
+    @contest.setter
+    def contest(self, d):
+        for i,k in enumerate(CONTEST_KEYS): self.E[6+i]=d[k] & 0xFF
 
     @property
     def _ivword(self): return struct.unpack_from("<I", self.M, 4)[0]
@@ -211,6 +233,39 @@ class Mon:
         struct.pack_into("<I", self.M, 4, w & 0xFFFFFFFF)
     @property
     def is_egg(self): return bool((self._ivword>>30)&1)
+
+    # --- Misc substruct: pokerus, met data, origins (M+0x00..0x03) ---
+    @property
+    def pokerus_strain(self): return (self.M[0]>>4)&0xF
+    @property
+    def pokerus_days(self): return self.M[0]&0xF
+    def set_pokerus(self, strain, days):
+        self.M[0] = ((strain&0xF)<<4)|(days&0xF)
+    @property
+    def met_location(self): return self.M[1]
+    @met_location.setter
+    def met_location(self, v): self.M[1]=v & 0xFF
+    @property
+    def _origins(self): return struct.unpack_from("<H", self.M, 2)[0]
+    def _set_origins(self, mask, shift, v):
+        w=(self._origins & ~(mask<<shift)) | ((v&mask)<<shift)
+        struct.pack_into("<H", self.M, 2, w & 0xFFFF)
+    @property
+    def met_level(self): return self._origins & 0x7F
+    @met_level.setter
+    def met_level(self, v): self._set_origins(0x7F, 0, v)
+    @property
+    def origin_game(self): return (self._origins>>7)&0xF
+    @origin_game.setter
+    def origin_game(self, v): self._set_origins(0xF, 7, v)
+    @property
+    def poke_ball(self): return (self._origins>>11)&0xF
+    @poke_ball.setter
+    def poke_ball(self, v): self._set_origins(0xF, 11, v)
+    @property
+    def ot_gender(self): return (self._origins>>15)&1
+    @ot_gender.setter
+    def ot_gender(self, v): self._set_origins(1, 15, 1 if v else 0)
 
     @property
     def nature(self): return self.pv % 25
