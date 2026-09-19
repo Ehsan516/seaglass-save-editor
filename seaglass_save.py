@@ -411,12 +411,21 @@ class SeaglassSave:
 
         # move-name pointer table: pointer to "Karate Chop" name (move 2)
         kc=findterm("Karate Chop")
+        found=False
         if kc>=0:
             t=0x08000000|kc
-            L=rom.find(bytes([t&0xFF,(t>>8)&0xFF,(t>>16)&0xFF,(t>>24)&0xFF]))
-            if L>=0: self.move_ptr1=L-MOVE_INFO_STRIDE
-            else: ok=False
-        else: ok=False
+            ptr=bytes([t&0xFF,(t>>8)&0xFF,(t>>16)&0xFF,(t>>24)&0xFF])
+            pos=0
+            while True:
+                L=rom.find(ptr,pos)
+                if L<0: break
+                cand=L-MOVE_INFO_STRIDE
+                if cand>=0:
+                    p1=int.from_bytes(rom[cand:cand+4],"little")
+                    if 0x08000000<=p1<0x0A000000 and decode_str(rom[p1-0x08000000:p1-0x08000000+16])=="Pound":
+                        self.move_ptr1=cand; found=True; break
+                pos=L+1
+        if not found: ok=False
 
         # item table: "Master Ball" (item 4); verify item 1 reads as Poke Ball
         pos=0; found=False

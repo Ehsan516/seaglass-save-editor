@@ -17,6 +17,10 @@
 #define MOVE_INFO_STRIDE 0x38
 #define ITEM_STRIDE    0x54
 #define ABILITY_STRIDE 0x1c
+#define DEFAULT_NAME_SP1  0x8f087c
+#define DEFAULT_MOVE_PTR1 0x6d2a18
+#define DEFAULT_ITEM_BASE 0x67e77c
+#define DEFAULT_ABIL_BASE 0x6e15b0
 
 static const int SB1_IDS[4]     = {1,2,3,4};
 static const int STORAGE_IDS[9] = {5,6,7,8,9,10,11,12,13};
@@ -24,14 +28,86 @@ static const int STORAGE_IDS[9] = {5,6,7,8,9,10,11,12,13};
 /* ---------------- state ---------------- */
 static uint8_t  g_sav[SAVE_SIZE];
 static long     g_sav_len = 0;
-static uint8_t *g_rom = NULL;
 static long     g_rom_len = 0;
 static int      g_sec[14];          /* section id -> file offset (-1 none) */
 static int      g_slot = -1;
 
+/* ---------------- ROM byte access -----------------------------------------
+ * Two ways to get ROM bytes, chosen at compile time:
+ *  - default (3DS/host): g_rom is the whole file in one malloc'd buffer.
+ *    Fine on 128MB+ RAM.
+ *  - __NDS__: DS/DSi homebrew gets ~4MB of RAM, nowhere near enough for a
+ *    16-32MB expanded ROM, so g_rom is never populated; g_romf is an open
+ *    FILE* instead and every read seeks+freads on demand. Behaviour (what
+ *    bytes come back) is identical either way -- only how they're fetched
+ *    differs -- so this does not need a matching change in seaglass_save.py
+ *    (desktop has no such memory constraint). Keep it that way: don't let
+ *    the NDS path leak into the shared logic below it. */
+#ifdef __NDS__
+static FILE *g_romf = NULL;
+/* Keep only decoded display names in RAM.  This is small enough for the DS
+   (about 58 KiB) and removes the constant seek+read traffic that otherwise
+   made every browser/editor redraw hit the SD card dozens of times. */
+static char g_sp_name_cache[MAX_LIST][13];
+static char g_mv_name_cache[1000][17];
+static char g_it_name_cache[1300][15];
+static uint8_t g_sp_name_valid[MAX_LIST];
+static uint8_t g_mv_name_valid[1000];
+static uint8_t g_it_name_valid[1300];
+/* Sprite decompression requests individual bytes. Cache four 4 KiB pages
+   so it does not turn one sprite into thousands of FAT seeks. Large anchor
+   scans still read directly into their bounded scratch buffer. */
+#define ROM_PAGE_SIZE 4096
+static uint8_t g_rom_pages[4][ROM_PAGE_SIZE];
+static uint32_t g_rom_page_off[4];
+static bool g_rom_page_valid[4];
+static void rom_read(uint32_t off, uint8_t *dst, int n){
+    if(n<=0) return;
+    if(!g_romf || off>=(uint32_t)g_rom_len || (uint32_t)n>(uint32_t)g_rom_len-off){
+        memset(dst,0,(size_t)n); return;
+    }
+    if(n<=64){
+        while(n>0){
+            uint32_t base=off&~(ROM_PAGE_SIZE-1u);
+            int page=(base/ROM_PAGE_SIZE)%4;
+            if(!g_rom_page_valid[page] || g_rom_page_off[page]!=base){
+                g_rom_page_valid[page]=false;
+                size_t want=(size_t)g_rom_len-base;
+                if(want>ROM_PAGE_SIZE)want=ROM_PAGE_SIZE;
+                if(fseek(g_romf,(long)base,SEEK_SET)!=0 || fread(g_rom_pages[page],1,want,g_romf)!=want){
+                    memset(dst,0,(size_t)n);return;
+                }
+                g_rom_page_off[page]=base;g_rom_page_valid[page]=true;
+            }
+            int count=ROM_PAGE_SIZE-(int)(off-base);if(count>n)count=n;
+            memcpy(dst,g_rom_pages[page]+off-base,(size_t)count);
+            dst+=count;off+=(uint32_t)count;n-=count;
+        }
+        return;
+    }
+    if(fseek(g_romf,(long)off,SEEK_SET)!=0){ memset(dst,0,(size_t)n); return; }
+    size_t got=fread(dst,1,(size_t)n,g_romf);
+    if(got<(size_t)n) memset(dst+got,0,(size_t)n-got);
+}
+static uint8_t rom_byte(uint32_t off){ uint8_t v=0; rom_read(off,&v,1); return v; }
+#define ROM_OK() (g_romf!=NULL)
+#else
+static uint8_t *g_rom = NULL;
+static void rom_read(uint32_t off, uint8_t *dst, int n){
+    if(!g_rom || off+(uint32_t)n>(uint32_t)g_rom_len){ memset(dst,0,n); return; }
+    memcpy(dst,g_rom+off,n);
+}
+static uint8_t rom_byte(uint32_t off){ return (g_rom && off<(uint32_t)g_rom_len)?g_rom[off]:0; }
+#define ROM_OK() (g_rom!=NULL)
+#endif
+
 bool sg_rom_ok = false;
-static uint32_t off_name_sp1 = 0x8f087c, off_stride = 0xD0;
-static uint32_t off_move_ptr1 = 0x6d2a18, off_item = 0x67e77c, off_abil = 0x6e15b0;
+static uint32_t off_name_sp1 = DEFAULT_NAME_SP1, off_stride = 0xD0;
+static uint32_t off_move_ptr1 = DEFAULT_MOVE_PTR1, off_item = DEFAULT_ITEM_BASE, off_abil = DEFAULT_ABIL_BASE;
+
+static sg_progress_fn g_progress = NULL;
+void sg_set_progress_callback(sg_progress_fn fn){ g_progress = fn; }
+static void report_progress(int pct){ if(g_progress) g_progress(pct<0?0:pct>100?100:pct); }
 
 uint16_t sg_species_ids[MAX_LIST]; int sg_species_n = 0;
 uint16_t sg_move_ids[1000];        int sg_move_n = 0;
@@ -277,7 +353,7 @@ void mon_nickname(const sg_mon*m,char*out,size_t n){ dec_str(m->head+0x08,10,out
 void mon_set_nickname(sg_mon*m,const char*s){ enc_name(s,m->head+0x08,10); }
 uint8_t sg_gender_ratio(uint16_t sp);
 char mon_gender(const sg_mon*m){
-    uint8_t r = g_rom ? sg_gender_ratio(mon_species(m)) : 255;
+    uint8_t r = ROM_OK() ? sg_gender_ratio(mon_species(m)) : 255;
     if(r==255) return 'N';
     if(r==254) return 'F';
     if(r==0)   return 'M';
@@ -326,52 +402,108 @@ void sg_set_level(sg_mon*m,int level){
 }
 
 /* ---------------- ROM ---------------- */
-static long rom_find(const uint8_t *pat,int n,long start){
+/* end<=0 means "search to the end of the ROM"; otherwise stop at end
+   (exclusive). detect_offsets() passes a real bound wherever the anchor
+   being searched for is known to be within a fixed distance of another one
+   already found -- e.g. Ivysaur must be within 0x200 bytes of a genuine
+   Bulbasaur match, so a decoy Bulbasaur (Seaglass has one -- see the
+   comment in detect_offsets) rejects in ~512 bytes instead of scanning
+   potentially the whole ROM before giving up. This matters everywhere, but
+   it's the difference between "loads in a couple seconds" and "looks frozen
+   for a minute+" specifically on __NDS__, where every byte costs a real
+   file seek+read instead of a memory access. */
+#ifdef __NDS__
+/* chunked search so detect_offsets() never needs the whole ROM in RAM at
+   once; runs only at load time so a couple seconds over a 16-32MB file is
+   fine as long as searches are properly bounded (see above). */
+#define SCAN_CHUNK (128*1024)
+static long rom_find(const uint8_t *pat,int n,long start,long end){
+    if(!g_romf||n<=0||n>SCAN_CHUNK) return -1;
+    if(end<=0 || end>g_rom_len) end=g_rom_len;
+    static uint8_t buf[SCAN_CHUNK+64]; /* static: too big for the DS stack */
+    for(long base=start; base<end; base+=SCAN_CHUNK){
+        long avail = end-base;
+        int want = (int)((avail < SCAN_CHUNK+n-1) ? avail : (SCAN_CHUNK+n-1));
+        rom_read((uint32_t)base, buf, want);
+        int limit = want-n+1;
+        for(int i=0;i<limit;i++)
+            if(buf[i]==pat[0] && !memcmp(buf+i,pat,n)) return base+i;
+    }
+    return -1;
+}
+#else
+static long rom_find(const uint8_t *pat,int n,long start,long end){
     if(!g_rom||n<=0) return -1;
-    for(long i=start; i+n<=g_rom_len; i++)
+    if(end<=0 || end>g_rom_len) end=g_rom_len;
+    for(long i=start; i+n<=end; i++)
         if(g_rom[i]==pat[0] && !memcmp(g_rom+i,pat,n)) return i;
     return -1;
 }
+#endif
 static uint32_t name_addr(uint16_t sp){ return off_name_sp1 + (uint32_t)(sp-1)*off_stride; }
 void sg_species_name(uint16_t sp,char*out,size_t n){
-    if(!g_rom||sp==0){ snprintf(out,n,"#%u",sp); return; }
+    if(!ROM_OK()||sp==0){ snprintf(out,n,"#%u",sp); return; }
+#ifdef __NDS__
+    if(sp<MAX_LIST && g_sp_name_valid[sp]){ snprintf(out,n,"%s",g_sp_name_cache[sp]); return; }
+#endif
     uint32_t a=name_addr(sp);
     if(a+12>(uint32_t)g_rom_len){ snprintf(out,n,"#%u",sp); return; }
-    dec_str(g_rom+a,12,out,n);
+    uint8_t buf[12]; rom_read(a,buf,12);
+    dec_str(buf,12,out,n);
     if(!out[0]) snprintf(out,n,"#%u",sp);
+#ifdef __NDS__
+    if(sp<MAX_LIST){ snprintf(g_sp_name_cache[sp],sizeof g_sp_name_cache[sp],"%s",out); g_sp_name_valid[sp]=1; }
+#endif
 }
 void sg_base_stats(uint16_t sp,uint8_t out[6]){
-    uint32_t a=name_addr(sp)-0x2c;
-    for(int i=0;i<6;i++) out[i]=g_rom?g_rom[a+i]:0;
+    if(!ROM_OK()){ memset(out,0,6); return; }
+    rom_read(name_addr(sp)-0x2c, out, 6);
 }
 uint8_t sg_gender_ratio(uint16_t sp){
-    uint32_t a=name_addr(sp)-0x2c+0x12;
-    return g_rom?g_rom[a]:255;
+    if(!ROM_OK()) return 255;
+    return rom_byte(name_addr(sp)-0x2c+0x12);
 }
 void sg_species_abilities(uint16_t sp,uint16_t*a0,uint16_t*a1){
-    uint32_t b=name_addr(sp)-0x2c+0x18;
-    *a0=g_rom?r16(g_rom+b):0; *a1=g_rom?r16(g_rom+b+2):0;
+    if(!ROM_OK()){ *a0=0; *a1=0; return; }
+    uint8_t buf[4]; rom_read(name_addr(sp)-0x2c+0x18, buf, 4);
+    *a0=r16(buf); *a1=r16(buf+2);
 }
 void sg_move_name(uint16_t mv,char*out,size_t n){
     if(mv==0){ snprintf(out,n,"-"); return; }
-    if(!g_rom){ snprintf(out,n,"move%u",mv); return; }
+    if(!ROM_OK()){ snprintf(out,n,"move%u",mv); return; }
+#ifdef __NDS__
+    if(mv<1000 && g_mv_name_valid[mv]){ snprintf(out,n,"%s",g_mv_name_cache[mv]); return; }
+#endif
     uint32_t p=off_move_ptr1+(uint32_t)(mv-1)*MOVE_INFO_STRIDE;
     if(p+4>(uint32_t)g_rom_len){ snprintf(out,n,"move%u",mv); return; }
-    uint32_t ptr=r32(g_rom+p);
+    uint8_t pbuf[4]; rom_read(p,pbuf,4);
+    uint32_t ptr=r32(pbuf);
     if(ptr<0x08000000u||ptr>=0x0A000000u){ snprintf(out,n,"move%u",mv); return; }
-    dec_str(g_rom+ptr-0x08000000u,16,out,n);
+    uint8_t nbuf[16]; rom_read(ptr-0x08000000u,nbuf,16);
+    dec_str(nbuf,16,out,n);
     if(!out[0]) snprintf(out,n,"move%u",mv);
+#ifdef __NDS__
+    if(mv<1000){ snprintf(g_mv_name_cache[mv],sizeof g_mv_name_cache[mv],"%s",out); g_mv_name_valid[mv]=1; }
+#endif
 }
 void sg_item_name(uint16_t it,char*out,size_t n){
     if(it==0){ snprintf(out,n,"(none)"); return; }
-    if(!g_rom){ snprintf(out,n,"item%u",it); return; }
-    dec_str(g_rom+off_item+(uint32_t)it*ITEM_STRIDE,14,out,n);
+    if(!ROM_OK()){ snprintf(out,n,"item%u",it); return; }
+#ifdef __NDS__
+    if(it<1300 && g_it_name_valid[it]){ snprintf(out,n,"%s",g_it_name_cache[it]); return; }
+#endif
+    uint8_t buf[14]; rom_read(off_item+(uint32_t)it*ITEM_STRIDE,buf,14);
+    dec_str(buf,14,out,n);
     if(!out[0]) snprintf(out,n,"item%u",it);
+#ifdef __NDS__
+    if(it<1300){ snprintf(g_it_name_cache[it],sizeof g_it_name_cache[it],"%s",out); g_it_name_valid[it]=1; }
+#endif
 }
 void sg_ability_name(uint16_t ab,char*out,size_t n){
     if(ab==0){ snprintf(out,n,"(none)"); return; }
-    if(!g_rom){ snprintf(out,n,"abil%u",ab); return; }
-    dec_str(g_rom+off_abil+(uint32_t)ab*ABILITY_STRIDE,13,out,n);
+    if(!ROM_OK()){ snprintf(out,n,"abil%u",ab); return; }
+    uint8_t buf[13]; rom_read(off_abil+(uint32_t)ab*ABILITY_STRIDE,buf,13);
+    dec_str(buf,13,out,n);
     if(!out[0]) snprintf(out,n,"abil%u",ab);
 }
 
@@ -432,33 +564,51 @@ static void build_lists(void){
     for(uint16_t sp=1; sp<1600; sp++){
         sg_species_name(sp,nm,sizeof nm);
         if(looks_like_species(nm)) sg_species_ids[sg_species_n++]=sp;
+        if((sp&0x7F)==0) report_progress(30+sp*20/1600);
     }
     for(uint16_t mv=1; mv<1000 && sg_move_n<1000; mv++){
         sg_move_name(mv,nm,sizeof nm);
         if(clean_name(nm) && strncmp(nm,"move",4)!=0) sg_move_ids[sg_move_n++]=mv;
+        if((mv&0x7F)==0) report_progress(50+mv*10/1000);
     }
     for(uint16_t it=1; it<1300 && sg_item_n<1300; it++){
         sg_item_name(it,nm,sizeof nm);
         if(clean_name(nm) && strncmp(nm,"item",4)!=0) sg_item_ids[sg_item_n++]=it;
+        if((it&0x7F)==0) report_progress(60+it*10/1300);
     }
+    report_progress(70);
     build_sorted();
+    report_progress(100);
 }
 
-/* insertion-sort ids by their name (small n, once at load) */
+/* insertion-sort ids by their name (small n, once at load). Names are
+   decoded once up front into a scratch buffer and sorted alongside the ids,
+   rather than re-decoding on every comparison as a naive insertion sort
+   would -- with a few hundred entries, an O(n^2) *comparison* count is
+   already fine, but an O(n^2) *ROM read* count is a real problem on
+   __NDS__, where every decode is a file seek+read rather than a memory
+   access. This produces the exact same sorted order, just without redoing
+   the expensive part. */
 static void sort_ids(uint16_t *dst,int n,void(*namef)(uint16_t,char*,size_t)){
-    for(int i=0;i<n;i++){
-        uint16_t id=dst[i]; char a[24]; namef(id,a,sizeof a);
+    static char names[MAX_LIST][24];
+    for(int i=0;i<n;i++) namef(dst[i], names[i], sizeof names[i]);
+    for(int i=1;i<n;i++){
+        uint16_t id=dst[i]; char nm[24]; memcpy(nm,names[i],sizeof nm);
         int j=i-1;
-        while(j>=0){ char b[24]; namef(dst[j],b,sizeof b);
-            if(strcasecmp(b,a)<=0) break; dst[j+1]=dst[j]; j--; }
-        dst[j+1]=id;
+        while(j>=0 && strcasecmp(names[j],nm)>0){
+            dst[j+1]=dst[j]; memcpy(names[j+1],names[j],sizeof names[j+1]);
+            j--;
+        }
+        dst[j+1]=id; memcpy(names[j+1],nm,sizeof names[j+1]);
     }
 }
 static void build_sorted(void){
     sg_move_sn=sg_move_n; memcpy(sg_move_sorted,sg_move_ids,sg_move_n*sizeof(uint16_t));
     sort_ids(sg_move_sorted,sg_move_sn,sg_move_name);
+    report_progress(80);
     sg_item_sn=sg_item_n; memcpy(sg_item_sorted,sg_item_ids,sg_item_n*sizeof(uint16_t));
     sort_ids(sg_item_sorted,sg_item_sn,sg_item_name);
+    report_progress(90);
     sg_species_sn=sg_species_n; memcpy(sg_species_sorted,sg_species_ids,sg_species_n*sizeof(uint16_t));
     sort_ids(sg_species_sorted,sg_species_sn,sg_species_name);
 }
@@ -474,7 +624,7 @@ int sg_level_of(const sg_mon *m){
     return level_from_exp(mon_exp(m));
 }
 int sg_calc_stat(const sg_mon *m, int i){
-    if(!g_rom) return 0;
+    if(!ROM_OK()) return 0;
     uint8_t base[6]; sg_base_stats(mon_species(m),base);
     int L=sg_level_of(m); if(L<1) L=1;
     int core=((2*base[i]+mon_iv(m,i)+mon_ev(m,i)/4)*L)/100;
@@ -489,53 +639,99 @@ static bool detect_offsets(void){
     n=enc_ascii("Bulbasaur",pat,sizeof pat);
     long pos=0; bool found=false;
     while(n>0){
-        long b=rom_find(pat,n,pos); if(b<0) break;
+        long b=rom_find(pat,n,pos,0); if(b<0) break;
         uint8_t iv[16]; int ivn=enc_ascii("Ivysaur",iv,sizeof iv);
-        long i=rom_find(iv,ivn,b);
+        /* Ivysaur must be within 0x200 bytes of a genuine Bulbasaur match, so
+           bound this search tightly -- Seaglass has a decoy Bulbasaur (see
+           section 4.6 of CLAUDE.md) that would otherwise make this scan
+           most of the ROM just to be rejected. */
+        long i=rom_find(iv,ivn,b,b+0x200+ivn);
         if(i>b){
             long stride=i-b;
             if(stride>=0x80 && stride<=0x200){
-                char v[16]; dec_str(g_rom+b+2*stride,8,v,sizeof v);
+                uint8_t vb[8]; rom_read((uint32_t)(b+2*stride),vb,8);
+                char v[16]; dec_str(vb,8,v,sizeof v);
                 if(!strcmp(v,"Venusaur")){ off_name_sp1=b; off_stride=stride; found=true; break; }
             }
         }
         pos=b+1;
     }
     if(!found) ok=false;
+    report_progress(10);
     /* moves: pointer to "Karate Chop"+terminator */
     n=enc_ascii("Karate Chop",pat,sizeof pat); pat[n]=0xFF;
-    long kc=rom_find(pat,n+1,0);
+    long kc=rom_find(pat,n+1,0,0); found=false;
     if(kc>=0){
         uint8_t pp[4]; w32(pp,0x08000000u|kc);
-        long L=rom_find(pp,4,0);
-        if(L>=0) off_move_ptr1=L-MOVE_INFO_STRIDE; else ok=false;
-    } else ok=false;
+        long ppos=0;
+        while(1){
+            long L=rom_find(pp,4,ppos,0); if(L<0) break;
+            if(L>=MOVE_INFO_STRIDE){
+                uint32_t cand=(uint32_t)(L-MOVE_INFO_STRIDE);
+                uint8_t p1b[4]; rom_read(cand,p1b,4);
+                uint32_t p1=r32(p1b);
+                if(p1>=0x08000000u && p1<0x0A000000u){
+                    uint8_t nb[16]; char mn[20]; rom_read(p1-0x08000000u,nb,16);
+                    dec_str(nb,16,mn,sizeof mn);
+                    if(!strcmp(mn,"Pound")){ off_move_ptr1=cand; found=true; break; }
+                }
+            }
+            ppos=L+1;
+        }
+    }
+    if(!found) ok=false;
+    report_progress(16);
     /* items: "Master Ball"+term (item 4); verify item1 = Poke Ball */
     n=enc_ascii("Master Ball",pat,sizeof pat); pat[n]=0xFF;
     pos=0; found=false;
     while(1){
-        long mb=rom_find(pat,n+1,pos); if(mb<0) break;
+        long mb=rom_find(pat,n+1,pos,0); if(mb<0) break;
         long cand=mb-4*ITEM_STRIDE;
         if(cand>=0){
-            char t[16]; dec_str(g_rom+cand+ITEM_STRIDE,14,t,sizeof t);
+            uint8_t tb[14]; rom_read((uint32_t)(cand+ITEM_STRIDE),tb,14);
+            char t[16]; dec_str(tb,14,t,sizeof t);
             if(!strncmp(t,"Pok",3)){ off_item=cand; found=true; break; }
         }
         pos=mb+1;
     }
     if(!found) ok=false;
+    report_progress(22);
     /* abilities: "Overgrow"+terminator (id 65) */
     n=enc_ascii("Overgrow",pat,sizeof pat); pat[n]=0xFF;
-    long og=rom_find(pat,n+1,0);
+    long og=rom_find(pat,n+1,0,0);
     if(og>=0) off_abil=og-65*ABILITY_STRIDE; else ok=false;
+    report_progress(28);
     /* verify */
     char a[24],b2[24],c[24],d[24];
     sg_species_name(1,a,sizeof a); sg_move_name(1,b2,sizeof b2);
     sg_item_name(1,c,sizeof c); sg_ability_name(65,d,sizeof d);
     if(strncmp(a,"Bulbas",6)||strcmp(b2,"Pound")||strncmp(c,"Pok",3)||strcmp(d,"Overgrow"))
         ok=false;
+    report_progress(30);
     return ok;
 }
+#ifdef __NDS__
 bool sg_load_rom(const char *path){
+    report_progress(0);
+    if(g_romf){ fclose(g_romf); g_romf=NULL; }
+    memset(g_sp_name_valid,0,sizeof g_sp_name_valid);
+    memset(g_mv_name_valid,0,sizeof g_mv_name_valid);
+    memset(g_it_name_valid,0,sizeof g_it_name_valid);
+    memset(g_rom_page_valid,0,sizeof g_rom_page_valid);
+    sg_rom_ok=false;
+    off_name_sp1=DEFAULT_NAME_SP1; off_stride=0xD0;
+    off_move_ptr1=DEFAULT_MOVE_PTR1; off_item=DEFAULT_ITEM_BASE; off_abil=DEFAULT_ABIL_BASE;
+    FILE *f=fopen(path,"rb"); if(!f) return false;
+    fseek(f,0,SEEK_END); g_rom_len=ftell(f); fseek(f,0,SEEK_SET);
+    if(g_rom_len<=0){ fclose(f); g_rom_len=0; return false; }
+    g_romf=f; /* kept open: every lookup reads on demand, see rom_read() above */
+    sg_rom_ok=detect_offsets();
+    build_lists();
+    return true;
+}
+#else
+bool sg_load_rom(const char *path){
+    report_progress(0);
     FILE *f=fopen(path,"rb"); if(!f) return false;
     fseek(f,0,SEEK_END); g_rom_len=ftell(f); fseek(f,0,SEEK_SET);
     if(g_rom) free(g_rom);
@@ -547,26 +743,27 @@ bool sg_load_rom(const char *path){
     build_lists();
     return true;
 }
+#endif
 
 /* ---------------- sprites (LZ77 front pic @+0x58, palettes +0x68/+0x70) --- */
 static int lz77(uint32_t off, uint8_t *out, int maxout){
-    if(off+4>(uint32_t)g_rom_len || g_rom[off]!=0x10) return -1;
-    int size=g_rom[off+1]|(g_rom[off+2]<<8)|(g_rom[off+3]<<16);
+    if(off+4>(uint32_t)g_rom_len || rom_byte(off)!=0x10) return -1;
+    int size=rom_byte(off+1)|(rom_byte(off+2)<<8)|(rom_byte(off+3)<<16);
     if(size<=0 || size>maxout) return -1;
     uint32_t p=off+4; int o=0;
     while(o<size){
         if(p>=(uint32_t)g_rom_len) return -1;
-        uint8_t fl=g_rom[p++];
+        uint8_t fl=rom_byte(p++);
         for(int b=0;b<8 && o<size;b++){
             if(fl&(0x80>>b)){
                 if(p+1>=(uint32_t)g_rom_len) return -1;
-                uint8_t hi=g_rom[p], lo=g_rom[p+1]; p+=2;
+                uint8_t hi=rom_byte(p), lo=rom_byte(p+1); p+=2;
                 int n=(hi>>4)+3, disp=(((hi&0xF)<<8)|lo)+1;
                 if(disp>o) return -1;
                 for(int i=0;i<n && o<size;i++){ out[o]=out[o-disp]; o++; }
             } else {
                 if(p>=(uint32_t)g_rom_len) return -1;
-                out[o++]=g_rom[p++];
+                out[o++]=rom_byte(p++);
             }
         }
     }
@@ -574,11 +771,12 @@ static int lz77(uint32_t off, uint8_t *out, int maxout){
 }
 bool sg_sprite_rgba(uint16_t sp, bool shiny, uint8_t *out){
     static uint8_t tiles[4096], palb[64];
-    if(!g_rom) return false;
+    if(!ROM_OK()) return false;
     uint32_t base=name_addr(sp)-0x2c;
     if(base+0x78>(uint32_t)g_rom_len) return false;
-    uint32_t pic =r32(g_rom+base+0x58);
-    uint32_t palp=r32(g_rom+base+(shiny?0x70:0x68));
+    uint8_t pb[4];
+    rom_read(base+0x58,pb,4); uint32_t pic=r32(pb);
+    rom_read(base+(shiny?0x70:0x68),pb,4); uint32_t palp=r32(pb);
     if(pic<0x08000000u||palp<0x08000000u) return false;
     if(lz77(pic -0x08000000u,tiles,sizeof tiles) < 2048) return false;
     if(lz77(palp-0x08000000u,palb ,sizeof palb ) < 32)   return false;
@@ -607,7 +805,7 @@ uint32_t sg_box_slot_off(int box, int slot){ return 4 + (uint32_t)(box*30+slot)*
 
 /* ---------------- stat recompute / reroll ---------------- */
 void sg_recompute_stats(sg_mon*m){
-    if(!m->is_party || !g_rom) return;
+    if(!m->is_party || !ROM_OK()) return;
     uint8_t base[6]; sg_base_stats(mon_species(m),base);
     int L=m->tail[0x04];
     int nb=mon_nature(m)/5, nl=mon_nature(m)%5;
@@ -631,7 +829,7 @@ static uint32_t rnd32(void){
 void sg_reroll_pv(sg_mon*m,int nature,int shiny,char gender){
     if(nature<0) nature=mon_nature(m);
     if(shiny<0)  shiny=mon_shiny(m)?1:0;
-    uint8_t ratio=g_rom?sg_gender_ratio(mon_species(m)):255;
+    uint8_t ratio=ROM_OK()?sg_gender_ratio(mon_species(m)):255;
     bool fixed=(ratio==0||ratio==254||ratio==255);
     if(gender==0 && !fixed) gender=mon_gender(m);
     for(long tries=0; tries<400000; tries++){

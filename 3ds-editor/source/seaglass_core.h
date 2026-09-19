@@ -27,6 +27,17 @@ bool sg_load_rom (const char *path);       /* also runs offset autodetect  */
 bool sg_write_save(const char *path);      /* writes current buffer        */
 extern bool sg_rom_ok;                     /* tables verified for this ROM */
 
+/* ---- progress reporting (optional; UI concern, kept out of the engine's
+   own logic) ----
+   sg_load_rom() is one long blocking call, worst-case several seconds on
+   slow storage (DS/DSi). Register a callback to get 0-100 progress updates
+   through detection and list-building so a UI can render a loading bar; the
+   callback fires on whatever the caller's own thread/stack is (there is no
+   engine-side timing or threading), so keep it fast. Pass NULL (the default)
+   to disable -- desktop/3DS don't register one and see no behavior change. */
+typedef void (*sg_progress_fn)(int percent);
+void sg_set_progress_callback(sg_progress_fn fn);
+
 /* ---- trainer / listing ---- */
 void sg_trainer_name(char *out, size_t n);
 int  sg_active_slot(void);                 /* 0=A 1=B                      */

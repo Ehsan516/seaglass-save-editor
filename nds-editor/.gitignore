@@ -1,0 +1,7 @@
+# Build output -- built via `make`, shipped separately as a GitHub Release
+build/
+*.nds
+*.elf
+*.ds.gba
+*.map
+*.lst

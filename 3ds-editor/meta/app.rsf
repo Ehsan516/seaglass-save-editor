@@ -23,7 +23,7 @@ AccessControlInfo:
   IdealProcessor                : 0
   AffinityMask                  : 1
   Priority                      : 16
-  MaxCpu                        : 0
+  MaxCpu                        : 0x9E
   HandleTableSize               : 512
   DisableDebug                  : false
   EnableForceDebug              : false
@@ -34,7 +34,6 @@ AccessControlInfo:
   CanShareDeviceMemory          : true
   RunnableOnSleep               : false
   SpecialMemoryArrange          : true
-  ResourceLimitCategory         : Other
   ReleaseKernelMajor            : "02"
   ReleaseKernelMinor            : "33"
 
@@ -44,9 +43,27 @@ AccessControlInfo:
    - 1ff00000-1ff7ffff
 
   FileSystemAccess:
-   - Categorized system application
-   - Direct sdmc
-   - sdmc
+   - CategorySystemApplication
+   - CategoryHardwareCheck
+   - CategoryFileSystemTool
+   - Debug
+   - TwlCardBackup
+   - TwlNandData
+   - Boss
+   - DirectSdmc
+   - Core
+   - CtrNandRo
+   - CtrNandRw
+   - CtrNandRoWrite
+   - CategorySystemSettings
+   - CardBoard
+   - ExportImportIvs
+   - DirectSdmcWrite
+   - SwitchCleanup
+   - SaveDataMove
+   - Shop
+   - CategoryHomeMenu
+   - SeedDB
   IoAccessControl:
 
   SystemCallAccess:
